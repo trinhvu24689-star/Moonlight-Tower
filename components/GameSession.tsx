@@ -9,7 +9,7 @@ import { GameMap } from './GameMap';
 import { 
     CustomerEntity, EnemyEntity, ProjectileEntity, HeroEntity, TowerVisual,
     LumberjackEntity, ChefEntity, ServerEntity, CollectorEntity, TreeEntity, CivilianEntity,
-    WallEntity, HouseEntity, WarehouseEntity, EntitiesStyle 
+    WallEntity, HouseEntity, WarehouseEntity, BuildingEntity, MainHeroEntity, LootEntity, EntitiesStyle 
 } from './Entities';
 import { TutorialSystem } from './TutorialSystem';
 import { 
@@ -20,44 +20,50 @@ import {
 } from '../types';
 import { 
   GAME_WIDTH, GAME_HEIGHT, 
-  COUNTER_POS, CUSTOMER_SPAWN, EXIT_POINT, 
-  INITIAL_UPGRADES, CUSTOMER_SPEED, ENEMY_SPAWN, ENEMY_SPEED,
-  TOWER_SLOTS, PROJECTILE_SPEED, GRILL_POS, HERO_POS,
-  TOWER_TYPES, ENEMY_SPAWN_RATE, CROPS,
-  FOREST_AREA, WOOD_STORAGE_POS, LUMBERJACK_HUT, STAFF_COSTS,
-  SEASON_DURATION,
-  WALL_X, WALL_BASE_HP, WALL_SEGMENTS_COUNT, SPAWN_ZONE
+  COUNTER_POS, GRILL_POS, WOOD_STORAGE_POS, CUSTOMER_SPAWN, EXIT_POINT, 
+  INITIAL_UPGRADES, CUSTOMER_SPEED, ENEMY_SPAWN, ENEMY_SPEED, HERO_SPEED,
+  TOWER_SLOTS, PROJECTILE_SPEED, TOWER_TYPES, ENEMY_SPAWN_RATE,
+  FOREST_AREA, LUMBERJACK_HUT, STAFF_COSTS, SEASON_DURATION, TIME_SCALE,
+  WALL_X, WALL_BASE_HP, WALL_SEGMENTS_COUNT, SPAWN_ZONE, HERO_START_POS, SEASON_BOSS
 } from '../constants';
 import { soundManager } from '../utils/audio';
 
-// --- CÁC HÀM TIỆN ÍCH (HELPER FUNCTIONS) ---
-
-// 1. Rút gọn số (10k, 1tr...)
 const formatNumber = (num: number) => {
-    if (num >= 1000000000) return (num / 1000000000).toFixed(1).replace('.0','') + ' tỷ';
-    if (num >= 1000000) return (num / 1000000).toFixed(1).replace('.0','') + ' tr';
-    if (num >= 1000) return (num / 1000).toFixed(1).replace('.0','') + ' k';
+    if (num >= 1e9) return (num / 1e9).toFixed(1) + ' tỷ';
+    if (num >= 1e6) return (num / 1e6).toFixed(1) + ' tr';
+    if (num >= 1e3) return (num / 1e3).toFixed(1) + ' k';
     return num.toString();
 };
 
-// 2. Định dạng giờ (08:05) - ĐÂY LÀ HÀM BỊ THIẾU LÚC NÃY
-const formatTime = (h: number, m: number) => 
-    `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+const formatTime = (h: number, m: number) => `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 
+interface LootItem { id: string; x: number; y: number; type: 'meat' | 'gold' | 'ruby'; value: number; }
+interface MainHero { x: number; y: number; state: 'idle' | 'moving' | 'attacking'; targetId: string | null; hp: number; maxHp: number; }
 interface WallSegment { id: number; y: number; hp: number; maxHp: number; }
 interface GameSessionProps { user: UserProfile; difficulty: GameDifficulty; onExit: (earnedGold: number, earnedRuby: number) => void; }
 
-// 3. Tính thời gian game
+// --- TÍNH THỜI GIAN THEO TỶ LỆ 1:60 ---
 const calculateGameTime = (): { season: Season, timeLeft: number, clock: GameClock } => {
     const now = new Date();
-    const msToday = now.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const seasonBlockMs = 6 * 60 * 60 * 1000; 
-    const seasonIdx = Math.floor(msToday / seasonBlockMs); 
-    const seasons: Season[] = ['spring', 'summer', 'autumn', 'winter'];
-    return { season: seasons[seasonIdx], timeLeft: 0, clock: { day: 1, month: 1, year: 1, hour: 12, minute: 0 } };
+    // Lấy mili-giây trôi qua trong ngày hôm nay (0h -> 24h)
+    const msToday = (now.getHours() * 3600000) + (now.getMinutes() * 60000) + (now.getSeconds() * 1000) + now.getMilliseconds();
+    
+    // 1. Tính Mùa (Mỗi 6 tiếng thực = 1 Mùa)
+    const sixHoursMs = 6 * 60 * 60 * 1000;
+    const seasonIdx = Math.floor(msToday / sixHoursMs); 
+    const seasons: Season[] = ['spring', 'summer', 'autumn', 'winter']; // 0-6h: Xuân, 6-12h: Hạ...
+    const currentSeason = seasons[seasonIdx];
+
+    // 2. Tính Đồng Hồ Game (Tỷ lệ 1:60)
+    // 1 giây thực = 1 phút game. => 1 ngày thực = 60 ngày game (nhưng đồng hồ chỉ chạy 00:00 -> 23:59 lặp lại)
+    // Để đồng hồ chạy mượt, ta lấy phần dư của giây.
+    const totalGameMinutes = Math.floor((msToday / 1000) * (TIME_SCALE / 60)); // Tổng phút game đã trôi qua
+    const gameHour = Math.floor(totalGameMinutes / 60) % 24;
+    const gameMinute = totalGameMinutes % 60;
+
+    return { season: currentSeason, timeLeft: 0, clock: { day: 1, month: 1, year: 1, hour: gameHour, minute: gameMinute } };
 };
 
-// --- COMPONENT CHÍNH ---
 export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onExit }) => {
   const isHardcore = difficulty === 'hardcore';
   const ENEMY_HP_MULTIPLIER = isHardcore ? 1.5 : 1.0;
@@ -65,23 +71,20 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
   const [localUser, setLocalUser] = useState<UserProfile>(user);
   const [resources, setResources] = useState<Resources>(user.savedResources || { 'prod_meat': 0, 'wood': 0 });
   const [staff, setStaff] = useState<StaffLevels>(user.staffLevels || { chef: 0, server: 0, lumberjack: 0, collector: 0 });
+  
+  const initialTime = calculateGameTime();
   const [gameState, setGameState] = useState<GameState>({
     gold: user.gold, ruby: user.ruby, cookedMeat: 5, meatCapacity: 20 + (staff.chef * 10),
     towerDamageBuff: 0, grillSpeedBuff: 0, lastTick: Date.now(), mana: 0, maxMana: 100,
-    season: 'spring', seasonTimer: 0, gameTime: { day:1, month:1, year:1, hour:12, minute:0 }
+    season: initialTime.season, seasonTimer: 0, gameTime: initialTime.clock
   });
 
+  // State Game
   const [wallLevel, setWallLevel] = useState(1);
-  const [walls, setWalls] = useState<WallSegment[]>(() => {
-      const segments = [];
-      const segmentHeight = GAME_HEIGHT / WALL_SEGMENTS_COUNT;
-      for (let i = 0; i < WALL_SEGMENTS_COUNT; i++) segments.push({ id: i, y: i * segmentHeight + 60, hp: WALL_BASE_HP, maxHp: WALL_BASE_HP });
-      return segments;
-  });
-
-  const [trees, setTrees] = useState(Array.from({length: 25}).map((_, i) => ({ 
-      id: i, x: FOREST_AREA.x + (Math.random() * FOREST_AREA.w), y: FOREST_AREA.y + (Math.random() * FOREST_AREA.h), hp: 100 
-  })));
+  const [walls, setWalls] = useState<WallSegment[]>(() => Array.from({length: 6}).map((_, i) => ({ id: i, y: i * 100 + 60, hp: WALL_BASE_HP, maxHp: WALL_BASE_HP })));
+  const [mainHero, setMainHero] = useState<MainHero>({ x: HERO_START_POS.x, y: HERO_START_POS.y, state: 'idle', targetId: null, hp: 500, maxHp: 500 });
+  const [lootItems, setLootItems] = useState<LootItem[]>([]);
+  const [bossSpawned, setBossSpawned] = useState(false); 
 
   const [quests, setQuests] = useState<Quest[]>([]);
   const [upgrades, setUpgrades] = useState<UpgradeConfig>(INITIAL_UPGRADES);
@@ -89,10 +92,12 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
   const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [civilians, setCivilians] = useState<Civilian[]>([]);
-  const [enemies, setEnemies] = useState<Enemy[]>([]);
-  const [projectiles, setProjectiles] = useState<Projectile[]>([]);
+  const [enemies, setEnemies] = useState<any[]>([]);
+  const [projectiles, setProjectiles] = useState<any[]>([]);
   const [particles, setParticles] = useState<Particle[]>([]); 
   const [lumberjackState, setLumberjackState] = useState<LumberjackState>({ state: 'idle', position: LUMBERJACK_HUT, targetTreeIndex: null });
+  const [trees, setTrees] = useState(Array.from({length: 25}).map((_, i) => ({ id: i, x: FOREST_AREA.x + Math.random()*FOREST_AREA.w, y: FOREST_AREA.y + Math.random()*FOREST_AREA.h, hp: 100 })));
+
   const [activeModal, setActiveModal] = useState<'none' | 'build_tower' | 'staff_hire'>('none');
   const [scale, setScale] = useState(1);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
@@ -112,6 +117,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
   const lastTimeCheck = useRef(0);
   const requestRef = useRef<number>(0);
 
+  // --- LOGIC NHIỆM VỤ ---
   const generateNewQuest = () => {
       const id = Date.now().toString();
       const scale = Math.max(1, localUser.level);
@@ -141,12 +147,75 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
       }));
   };
 
+  // --- LOGIC HERO TỰ ĐỘNG ---
+  const updateHero = () => {
+      setMainHero(hero => {
+          let { x, y, state, targetId } = hero;
+          let newTargetId = targetId;
+
+          // 1. Tìm mục tiêu (Ưu tiên nhặt đồ -> Đánh quái gần)
+          if (!newTargetId) {
+              const nearLoot = lootItems[0]; 
+              if (nearLoot) newTargetId = nearLoot.id;
+              else {
+                  // Chỉ đánh quái đã vượt qua rừng (gần tường) để đỡ chạy xa
+                  const nearEnemy = enemies.find(e => e.position.x < WALL_X + 250); 
+                  if (nearEnemy) newTargetId = nearEnemy.id;
+              }
+          }
+
+          // 2. Di chuyển & Hành động
+          if (newTargetId) {
+              const loot = lootItems.find(i => i.id === newTargetId);
+              const enemy = enemies.find(e => e.id === newTargetId);
+              const target = loot ? {x: loot.x, y: loot.y} : (enemy ? enemy.position : null);
+
+              if (target) {
+                  const dx = target.x - x;
+                  const dy = target.y - y;
+                  const dist = Math.sqrt(dx*dx + dy*dy);
+                  
+                  if (dist < 20) { // Đã tới nơi
+                      if (loot) { 
+                          if (loot.type === 'gold') setGameState(s => ({...s, gold: s.gold + loot.value}));
+                          if (loot.type === 'ruby') setGameState(s => ({...s, ruby: s.ruby + loot.value}));
+                          if (loot.type === 'meat') setGameState(s => ({...s, cookedMeat: s.cookedMeat + loot.value})); 
+                          setLootItems(prev => prev.filter(i => i.id !== newTargetId));
+                          newTargetId = null; 
+                      } else if (enemy) { 
+                          state = 'attacking';
+                          enemy.hp -= 20; // Hero chém mạnh
+                      }
+                  } else {
+                      state = 'moving';
+                      x += (dx / dist) * HERO_SPEED;
+                      y += (dy / dist) * HERO_SPEED;
+                  }
+              } else {
+                  newTargetId = null; 
+                  state = 'idle';
+              }
+          } else {
+              // Về nhà
+              const distHome = Math.sqrt(Math.pow(HERO_START_POS.x - x, 2) + Math.pow(HERO_START_POS.y - y, 2));
+              if (distHome > 5) {
+                  const dx = HERO_START_POS.x - x;
+                  const dy = HERO_START_POS.y - y;
+                  x += (dx / distHome) * HERO_SPEED;
+                  y += (dy / distHome) * HERO_SPEED;
+                  state = 'moving';
+              } else state = 'idle';
+          }
+          return { ...hero, x, y, state, targetId: newTargetId };
+      });
+  };
+
   const upgradeWall = () => {
       const cost = wallLevel * 1000;
       if (gameState.gold >= cost) {
           setGameState(prev => ({ ...prev, gold: prev.gold - cost }));
           setWallLevel(l => l + 1);
-          setWalls(prev => prev.map(w => ({ ...w, hp: w.maxHp + 500, maxHp: w.maxHp + 500 })));
+          setWalls(prev => prev.map(w => ({ ...w, hp: w.maxHp + 1000, maxHp: w.maxHp + 1000 })));
           spawnParticle(WALL_X, 300, 'text', '#fbbf24', 'Tường UP!', <Shield size={20}/>);
           soundManager.playCoin();
       } else spawnParticle(WALL_X, 300, 'text', '#ef4444', 'Thiếu tiền!');
@@ -183,23 +252,22 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     if (showTutorial || activeModal !== 'none' || levelUpModal || showExitConfirm) return;
     const now = Date.now();
     
+    // --- CẬP NHẬT THỜI GIAN & MÙA ---
     if (now - lastTimeCheck.current > 100) {
         setGameState(prev => {
             const timeData = calculateGameTime();
             if (timeData.season !== prev.season) {
-                 let msg = "";
-                 if (timeData.season === 'spring') msg = "Mùa Xuân đến!";
-                 if (timeData.season === 'summer') msg = "Mùa Hè oi bức!";
-                 if (timeData.season === 'autumn') msg = "Mùa Thu vàng!";
-                 if (timeData.season === 'winter') msg = "Mùa Đông giá rét!";
-                 soundManager.speak(msg, 'guide'); setGuideMessage(msg);
+                 let msg = `Mùa ${timeData.season.toUpperCase()} đã đến!`;
+                 soundManager.speak(msg, 'guide'); 
+                 setGuideMessage(msg);
+                 setBossSpawned(false); // Reset boss mỗi mùa mới
             }
-            return { ...prev, season: timeData.season, seasonTimer: timeData.timeLeft, gameTime: timeData.clock };
+            return { ...prev, season: timeData.season, gameTime: timeData.clock };
         });
         lastTimeCheck.current = now;
     }
 
-    // --- SPAWN KHÁCH TỪ TRÁI ---
+    // --- SPAWN KHÁCH & DÂN ---
     const MAX_CUSTOMERS = 10 + (staff.server * 2);
     if (now - lastCustomerSpawn.current > Math.max(1000, 3000 - (localUser.level * 100)) && customers.length < MAX_CUSTOMERS) {
       setCustomers(prev => [...prev, { id: `cust-${now}`, position: { ...CUSTOMER_SPAWN }, speed: CUSTOMER_SPEED + (staff.server * 0.1), state: 'walking_in', patience: 100, requestAmount: 1, skin: Math.random()>0.5?'barbarian':'wolf', type: 'warrior' }]);
@@ -210,29 +278,32 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         lastCivilianSpawn.current = now;
     }
 
-    // --- SPAWN QUÁI TỪ PHẢI (MÁU YẾU HƠN) ---
+    // --- SPAWN QUÁI ---
     const currentSpawnRate = Math.max(500, ENEMY_SPAWN_RATE - (localUser.level * 300));
     if (now - lastEnemySpawn.current > currentSpawnRate && enemies.length < 50) {
-       let type: EnemyType = 'pumpkin';
-       let speed = ENEMY_SPEED;
-       const isBoss = Math.random() < 0.05; 
-       
-       const hpMulti = 1 + (localUser.level * 0.1); // Giảm độ khó tăng máu
-       const baseHp = (isBoss ? 1000 : 80) * hpMulti; // Máu gốc giảm
-
-       const randomY = Math.random() * (SPAWN_ZONE.maxY - SPAWN_ZONE.minY) + SPAWN_ZONE.minY;
-       const randomX = Math.random() * (SPAWN_ZONE.maxX - SPAWN_ZONE.minX) + SPAWN_ZONE.minX;
-
-       setEnemies(prev => [...prev, { 
-           id: `e-${now}`, position: { x: randomX, y: randomY }, path: [], currentPathIndex: 0,
-           speed: (isBoss ? 0.4 : speed) * (isHardcore ? 1.2 : 1), 
-           hp: baseHp, maxHp: baseHp, state: 'walking', 
-           type: isBoss ? 'boss' : (Math.random()>0.5?'skeleton':'pumpkin'), 
-           isBoss, isFrozen: gameState.season === 'winter' 
-       }]);
+       // Chỉ spawn Boss 1 lần duy nhất mỗi mùa (khi chưa có)
+       if (!bossSpawned && enemies.filter(e => e.isBoss).length === 0) {
+           const bossType = SEASON_BOSS[gameState.season as keyof typeof SEASON_BOSS];
+           setEnemies(prev => [...prev, { 
+               id: `BOSS-${now}`, position: { x: 900, y: 300 }, path: [], currentPathIndex: 0,
+               speed: 0.3, hp: 5000 * (1 + localUser.level*0.2), maxHp: 5000, state: 'walking', 
+               type: 'boss', isBoss: true, season: gameState.season 
+           }]);
+           setBossSpawned(true);
+           soundManager.playUltimate();
+       } else {
+           // Spawn quái thường
+           setEnemies(prev => [...prev, { 
+               id: `e-${now}`, position: { x: SPAWN_ZONE.minX + Math.random()*50, y: SPAWN_ZONE.minY + Math.random()*400 }, path: [], currentPathIndex: 0,
+               speed: ENEMY_SPEED * (isHardcore ? 1.2 : 1), 
+               hp: 100 * (1 + localUser.level*0.1), maxHp: 100, state: 'walking', 
+               type: Math.random()>0.5?'skeleton':'pumpkin', isBoss: false 
+           }]);
+       }
        lastEnemySpawn.current = now;
     }
 
+    // --- AI QUÁI ---
     setEnemies(prev => prev.map(enemy => {
         let { x, y } = enemy.position;
         let isAttacking = false;
@@ -251,6 +322,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
 
     setWalls(prev => prev.filter(w => w.hp > 0));
 
+    // --- XỬ LÝ ĐẠN & LOOT ---
     setProjectiles(prev => {
       const active: Projectile[] = [];
       const hits: string[] = []; 
@@ -272,15 +344,16 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
              if (newHp <= 0) {
                  updateQuestProgress('kill', 1);
                  addExp(e.isBoss ? 100 : 5);
+                 
+                 // Rớt đồ (Loot Item) thay vì cộng tiền ngay
                  if (e.isBoss) {
-                     const goldDrop = 500 + (localUser.level * 100);
-                     setGameState(gs => ({...gs, gold: gs.gold + goldDrop, ruby: gs.ruby + 5}));
-                     spawnParticle(e.position.x, e.position.y, 'text', '#fbbf24', `+${formatNumber(goldDrop)}g`, <Crown size={16}/>);
-                 } else if (Math.random() < 0.3) {
-                     setResources(r => ({ ...r, 'prod_meat': (r['prod_meat'] || 0) + 1 })); 
-                     spawnParticle(e.position.x, e.position.y, 'text', '#ef4444', '+1 Thịt', <Beef size={12}/>);
+                     setLootItems(prev => [...prev, 
+                        { id: `l-${Date.now()}-1`, x: e.position.x, y: e.position.y, type: 'gold', value: 1000 },
+                        { id: `l-${Date.now()}-2`, x: e.position.x + 20, y: e.position.y, type: 'ruby', value: 5 }
+                     ]);
+                 } else if (Math.random() < 0.4) {
+                     setLootItems(prev => [...prev, { id: `l-${Date.now()}`, x: e.position.x, y: e.position.y, type: 'meat', value: 1 }]);
                  }
-                 if (staff.collector > 0) { let goldDrop = 10 + localUser.level; setGameState(gs => ({...gs, gold: gs.gold + goldDrop})); spawnParticle(e.position.x, e.position.y - 10, 'text', '#fbbf24', `+${goldDrop}g`); }
                  setGameState(gs => ({ ...gs, mana: Math.min(gs.mana + (e.isBoss?50:10), gs.maxMana) }));
              }
              return { ...e, hp: newHp };
@@ -294,6 +367,9 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     setParticles(prev => prev.map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.1, life: p.life - 0.02 })).filter(p => p.life > 0));
     setGameState(prev => ({ ...prev, lastTick: now }));
     
+    // Logic Hero (Nhặt đồ & Đánh quái)
+    updateHero();
+
     const chefBoost = staff.chef * 500;
     const grillSpeed = Math.max(200, upgrades.grill.speed - chefBoost - (gameState.grillSpeedBuff * 10));
     if (now - lastCookTime.current > grillSpeed && gameState.cookedMeat < gameState.meatCapacity) {
@@ -322,12 +398,11 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     }));
 
     setCivilians(prev => prev.map(c => {
-        let {x, y} = c.position;
         if (c.state === 'walking_in' && getDistance(c.position, WOOD_STORAGE_POS) < 5) {
              if (resources['wood'] > 0) {
                  setResources(r => ({...r, wood: r.wood - 1}));
                  setGameState(g => ({...g, gold: g.gold + 50}));
-                 spawnParticle(x, y, 'text', '#fbbf24', '+50g');
+                 spawnParticle(c.position.x, c.position.y, 'text', '#fbbf24', '+50g');
                  return {...c, state: 'leaving'};
              }
              return {...c, state: 'leaving'};
@@ -337,7 +412,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     }).filter(c => getDistance(c.position, EXIT_POINT) > 10));
 
     setCustomers(prev => prev.map((c, i) => {
-        let target = i===0 ? COUNTER_POS : {x: COUNTER_POS.x-60-(i*20), y: COUNTER_POS.y-(i*30)+100}; // Xếp hàng bên trái
+        let target = i===0 ? COUNTER_POS : {x: COUNTER_POS.x-60-(i*20), y: COUNTER_POS.y-(i*30)+100}; 
         if (c.state === 'walking_in' || c.state === 'waiting') {
             if (getDistance(c.position, target) < 5) return {...c, state: i===0 ? 'buying' : 'waiting'};
             return {...c, position: moveTowards(c.position, target, c.speed)};
@@ -346,7 +421,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         return {...c, position: moveTowards(c.position, EXIT_POINT, c.speed)};
     }).filter(c => getDistance(c.position, EXIT_POINT) > 10));
 
-  }, [customers, civilians, enemies, towers, gameState, showTutorial, activeModal, levelUpModal, showExitConfirm, localUser.level, resources, noMeatWarning, lumberjackState, staff, walls]);
+  }, [customers, civilians, enemies, towers, gameState, showTutorial, activeModal, levelUpModal, showExitConfirm, localUser.level, resources, noMeatWarning, lumberjackState, staff, walls, lootItems, bossSpawned]);
 
   useEffect(() => {
     const first = customers[0];
@@ -437,6 +512,13 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
             {staff.server > 0 && <ServerEntity x={COUNTER_POS.x - 30} y={COUNTER_POS.y} level={staff.server} />}
             {staff.collector > 0 && <CollectorEntity x={GAME_WIDTH/2} y={GAME_HEIGHT/2 + 50} level={staff.collector} />}
 
+            {/* Các Item rơi dưới đất */}
+            {lootItems.map(item => <LootEntity key={item.id} x={item.x} y={item.y} type={item.type} />)}
+
+            {/* Buildings */}
+            <BuildingEntity x={GRILL_POS.x} y={GRILL_POS.y} type="grill" />
+            <BuildingEntity x={COUNTER_POS.x} y={COUNTER_POS.y} type="counter" />
+
             {TOWER_SLOTS.map((slot, idx) => {
                 const builtTower = towers.find(t => t.slotId === idx);
                 return (
@@ -456,7 +538,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
                 {gameState.cookedMeat > 0 ? <div className="bg-white/90 rounded-full px-2 py-1 border border-black shadow-md flex items-center gap-1 animate-bounce"><Beef size={14} className="text-red-600"/><span className="font-bold text-xs text-black">{gameState.cookedMeat}</span></div> : <div className="bg-red-500/90 rounded-full px-2 py-1 border border-white shadow-md"><span className="font-bold text-[10px] text-white">HẾT HÀNG</span></div>}
             </div>
 
-            <HeroEntity x={HERO_POS.x} y={HERO_POS.y} />
+            <MainHeroEntity x={mainHero.x} y={mainHero.y} state={mainHero.state} flip={mainHero.x > (mainHero.targetId ? 0 : 9999)} />
             {noMeatWarning && <div className="absolute top-32 left-1/2 -translate-x-1/2 bg-red-900/90 border-2 border-red-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 animate-bounce z-[60]"><AlertCircle /> CẦN THỊT!</div>}
 
             {customers.map(c => <CustomerEntity key={c.id} customer={c} />)}
@@ -466,7 +548,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
             {particles.map(p => <div key={p.id} className="absolute pointer-events-none font-black z-[100]" style={{ left: p.x, top: p.y, color: p.color, fontSize: p.size + 10, opacity: p.life, transform: 'translate(-50%, -50%)', textShadow: '1px 1px 0 #000' }}>{p.type === 'icon' || p.type === 'snow' || p.type === 'rain' || p.type === 'leaf' ? p.icon : p.text}</div>)}
             {ultimateActive && <div className="absolute inset-0 z-[200] pointer-events-none animate-pulse bg-red-500/20 flex items-center justify-center"><h1 className="text-6xl font-black text-red-500 drop-shadow-[0_4px_0_#000] animate-bounce">THIÊN THẠCH!!!</h1></div>}
 
-            {/* --- UI HUD --- */}
             <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-50">
                 <div className="flex justify-between items-start pointer-events-auto w-full">
                     <div className="flex gap-2 items-center">
@@ -481,10 +562,10 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
                 </div>
                 {guideMessage && <div className="absolute top-20 left-4 max-w-[250px] animate-in slide-in-from-left duration-500 pointer-events-none z-[60]"><div className="bg-stone-900/90 border-2 border-purple-500 p-3 rounded-xl rounded-tl-none shadow-xl flex flex-col"><p className="text-yellow-300 font-bold text-xs uppercase mb-1">Tiểu Quỷ mách:</p><p className="text-white text-sm font-medium leading-tight">{guideMessage}</p></div></div>}
                 
-                {/* Danh Sách Nhiệm Vụ */}
-                <div className="absolute top-16 left-4 flex flex-col gap-2 pointer-events-none">
+                {/* HIỂN THỊ NHIỆM VỤ GÓC DƯỚI TRÁI */}
+                <div className="absolute bottom-20 left-4 flex flex-col gap-2 pointer-events-none">
                     {quests.map(q => (
-                        <div key={q.id} className="bg-black/60 border-l-4 border-yellow-500 p-2 rounded w-48 text-white">
+                        <div key={q.id} className="bg-black/60 border-l-4 border-yellow-500 p-2 rounded w-48 text-white shadow-lg backdrop-blur-sm">
                             <div className="flex justify-between items-center text-xs font-bold text-yellow-400">
                                 <span>{q.description}</span>
                                 <span>{q.type==='kill' ? <Gem size={10} className="inline text-red-500"/> : <Coins size={10} className="inline text-yellow-500"/>}</span>
