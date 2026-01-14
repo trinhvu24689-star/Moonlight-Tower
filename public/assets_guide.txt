@@ -1,9 +1,0 @@
-
-Đây là thư mục Public.
-Hãy đặt các file tài nguyên của bạn vào đây:
-1. spritesheet.png (Ảnh nhân vật)
-2. Các file âm thanh (.mp3, .wav) nếu có.
-
-Trong code, đường dẫn sẽ là:
-/spritesheet.png
-/sounds/music.mp3
