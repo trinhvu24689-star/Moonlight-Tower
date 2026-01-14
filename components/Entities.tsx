@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { Customer, Enemy, Projectile, TowerType, EnemyType, Civilian } from '../types';
+import React, { useEffect } from 'react';
+import { Customer, Enemy, Projectile, TowerType, Civilian } from '../types';
 import { Axe, ChefHat, User, Magnet } from 'lucide-react';
 
 // --- HÀM LẤY ẢNH ---
@@ -24,8 +24,8 @@ const speak = (text: string, pitch = 1, rate = 1) => {
     window.speechSynthesis.speak(utterance);
 };
 
-// --- CSS ANIMATION (NHÚNG TRỰC TIẾP) ---
-const AnimationStyles = () => (
+// --- CSS ANIMATION (COMPONENT STYLE) ---
+export const EntitiesStyle = () => (
   <style>{`
     @keyframes walk {
       0%, 100% { transform: rotate(-5deg) translateY(0); }
@@ -84,7 +84,9 @@ const SpriteImage: React.FC<{ id: number; className?: string }> = ({ id, classNa
   />
 );
 
-// 1. TƯỚNG (HERO) - Đứng lắc lư, bắn thì giật
+// --- CÁC ENTITY ---
+
+// 1. TƯỚNG (HERO)
 export const HeroEntity: React.FC<{ x: number, y: number }> = ({ x, y }) => {
   return (
     <BaseEntity x={x} y={y} className="-ml-8 -mt-[80px]" scale={1.2} animType="walk">
@@ -93,12 +95,11 @@ export const HeroEntity: React.FC<{ x: number, y: number }> = ({ x, y }) => {
   );
 };
 
-// 2. KHÁCH HÀNG (CUSTOMER) - Đi bộ, mua được hàng thì nói cảm ơn
+// 2. KHÁCH HÀNG (CUSTOMER)
 export const CustomerEntity: React.FC<{ customer: Customer }> = ({ customer }) => {
   const isWaiting = customer.state === 'waiting';
   const spriteId = customer.skin === 'wolf' ? SPRITE_IDS.WOLF_MAN : SPRITE_IDS.CIVILIAN;
 
-  // Hiệu ứng nói khi nhận đồ
   useEffect(() => {
     if (customer.state === 'eating') speak("Ngon quá!", 1.2, 1.2);
     if (customer.state === 'leaving') speak("Cảm ơn nha!", 1, 1.5);
@@ -132,7 +133,7 @@ export const CivilianEntity: React.FC<{ civilian: Civilian }> = ({ civilian }) =
     );
 };
 
-// 4. KẺ THÙ (ENEMY) - Boss xuất hiện là hét
+// 4. KẺ THÙ (ENEMY)
 export const EnemyEntity: React.FC<{ enemy: Enemy }> = ({ enemy }) => {
   const hpPercent = (enemy.hp / enemy.maxHp) * 100;
   
@@ -144,14 +145,12 @@ export const EnemyEntity: React.FC<{ enemy: Enemy }> = ({ enemy }) => {
   else if (enemy.type === 'bat') { spriteId = SPRITE_IDS.ENEMY_BAT; anim = 'fly'; }
   else if (enemy.type === 'boss') { spriteId = SPRITE_IDS.ENEMY_BOSS; scale = 2; }
 
-  // Logic giọng nói
   useEffect(() => {
-    if (enemy.isBoss) speak("Ta là trùm cuối đây!", 0.5, 0.8); // Giọng trầm
-  }, []); // Chỉ nói 1 lần lúc xuất hiện
+    if (enemy.isBoss) speak("Ta là trùm cuối đây!", 0.5, 0.8); 
+  }, []); 
 
   return (
     <BaseEntity x={enemy.position.x} y={enemy.position.y} className={`-ml-8 ${enemy.type === 'boss' ? '-mt-[120px]' : '-mt-[80px]'}`} scale={scale} animType={anim}>
-      {/* Thanh máu */}
       <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-10 h-1.5 bg-gray-900 rounded border border-black overflow-hidden z-50">
         <div className={`h-full transition-all duration-200 ${enemy.isBoss ? 'bg-purple-600' : 'bg-red-500'}`} style={{ width: `${hpPercent}%` }}></div>
       </div>
@@ -175,7 +174,6 @@ export const TowerVisual: React.FC<{ type: TowerType }> = ({ type }) => {
             <div className="absolute bottom-0 opacity-80">
                 <img src="/Class_Item_1.png" className="w-12 h-8 object-cover grayscale brightness-50" />
             </div>
-            {/* Tướng đứng trên tháp lắc lư nhẹ */}
             <div className="absolute bottom-2 anim-walk">
                  <SpriteImage id={heroId} className="w-14 h-14" />
             </div>
@@ -185,14 +183,14 @@ export const TowerVisual: React.FC<{ type: TowerType }> = ({ type }) => {
     );
 }
 
-// 6. ĐẠN BAY XOAY TÍT
+// 6. ĐẠN (PROJECTILE)
 export const ProjectileEntity: React.FC<{ projectile: Projectile }> = ({ projectile }) => (
   <BaseEntity x={projectile.position.x} y={projectile.position.y} className="w-8 h-8 -mt-4 -ml-4 z-50">
     <div className={`w-4 h-4 rounded-full shadow-lg animate-spin ${projectile.effect === 'slow' ? 'bg-blue-400 shadow-blue-500' : 'bg-orange-500 shadow-red-500'}`} />
   </BaseEntity>
 );
 
-// 7. CÁC NHÂN VIÊN KHÁC
+// 7. NHÂN VIÊN (STAFF)
 export const LumberjackEntity: React.FC<{ x: number, y: number, state: string }> = ({ x, y, state }) => (
     <BaseEntity x={x} y={y} className="-ml-6 -mt-[60px]" flip={state === 'walking_to_tree' || state === 'chopping'} animType={state==='chopping'?'attack':'walk'}>
         <div className="flex flex-col items-center">
@@ -243,23 +241,35 @@ export const TreeEntity: React.FC<{ x: number, y: number, hp: number }> = ({ x, 
     </BaseEntity>
 );
 
-// --- XUẤT COMPONENT STYLE & CÁC ENTITY ---
-// Quan trọng: Phải có dòng AnimationStyles ở đầu file App hoặc Layout, 
-// nhưng để tiện chồng nhét nó vào export luôn, vk chỉ cần dùng Entities là có style.
-export const EntitiesStyle = AnimationStyles; 
+// --- 8. TƯỜNG THÀNH (WALL) - QUAN TRỌNG ĐỂ FIX LỖI ---
+export const WallEntity: React.FC<{ x: number, y: number, hp: number, maxHp: number }> = ({ x, y, hp, maxHp }) => {
+    const damageLevel = hp / maxHp; 
+    let filter = ""; 
+    
+    // Tường nứt dần khi mất máu
+    if (damageLevel < 0.7) filter = "sepia(0.5)"; 
+    if (damageLevel < 0.4) filter = "sepia(1) hue-rotate(-30deg)"; 
+    if (hp <= 0) return null; // Vỡ rồi thì biến mất
 
-export const SPRITE_SHEET_SRC = ''; export const SPRITE_SCALE = 1; export const SPRITES = {}; export { SpriteRenderer }; const SpriteRenderer = () => null;
+    return (
+        <BaseEntity x={x} y={y} className="-ml-8 -mt-[60px]" scale={1.6}>
+            {/* Thanh máu tường */}
+            <div className="absolute -top-6 left-1/2 -translate-x-1/2 w-14 h-1.5 bg-black rounded border border-white/50">
+                 <div className="h-full bg-blue-500 transition-all" style={{ width: `${damageLevel * 100}%` }}></div>
+            </div>
 
-// Chèn style vào trang ngay khi file này được load
-const styleElement = document.createElement("style");
-styleElement.innerHTML = `
-    @keyframes walk { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg) translateY(-3px); } }
-    @keyframes fly { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-    @keyframes attack { 0% { transform: scale(1); } 50% { transform: scale(1.3) rotate(10deg); } 100% { transform: scale(1); } }
-    @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
-    .anim-walk { animation: walk 0.8s infinite ease-in-out; }
-    .anim-fly { animation: fly 1.5s infinite ease-in-out; }
-    .anim-attack { animation: attack 0.5s infinite; }
-    .anim-shake { animation: shake 0.2s infinite; }
-`;
-document.head.appendChild(styleElement);
+            {/* Dùng ảnh Rương (Item 12) xếp chồng lên làm tường đá */}
+            <div className="relative flex flex-col items-center">
+                 <img src="/Class_Item_12.png" className="w-16 h-12 object-cover rounded-sm border border-black/30" style={{ filter }} />
+                 <img src="/Class_Item_12.png" className="w-16 h-12 object-cover -mt-8 rounded-sm border border-black/30" style={{ filter }} />
+            </div>
+        </BaseEntity>
+    );
+};
+
+// Các biến export giả để tương thích code cũ (nếu có)
+export const SPRITE_SHEET_SRC = ''; 
+export const SPRITE_SCALE = 1; 
+export const SPRITES = {}; 
+export { SpriteRenderer }; 
+const SpriteRenderer = () => null;
