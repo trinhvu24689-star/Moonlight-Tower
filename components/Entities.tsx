@@ -9,11 +9,10 @@ const SPRITE_IDS = {
   ENEMY_PUMPKIN: 119, ENEMY_SKELETON: 125, ENEMY_BAT: 131,
   BOSS_TREE: 60, BOSS_FIRE: 150, BOSS_SKELETON: 128, BOSS_ICE: 155,
   CIVILIAN: 1, WOLF_MAN: 135,
-  // Đã xóa các ID GRILL, COUNTER, HOUSE vì sẽ tự vẽ
   LOOT_MEAT: 137, LOOT_GOLD: 51, MAIN_HERO: 103, TREE: 60
 };
 
-// ... Các hàm style giữ nguyên ...
+// ... CSS ANIMATION ...
 export const EntitiesStyle = () => (
   <style>{`
     @keyframes walk { 0%, 100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg) translateY(-3px); } }
@@ -37,17 +36,28 @@ const SpriteImage: React.FC<{ id: number; className?: string }> = ({ id, classNa
   <img src={getSpriteUrl(id)} className={`object-contain drop-shadow-md rendering-pixelated ${className}`} onError={(e) => (e.target as HTMLImageElement).src = '/Class_Monster_1.png'} />
 );
 
-// --- BUILDING ENTITY (Tự vẽ Lò nướng và Quầy bằng CSS) ---
+// --- HOUSE ENTITY (Đã thêm lại: Tự vẽ bằng CSS) ---
+export const HouseEntity: React.FC<{ x: number, y: number }> = ({ x, y }) => (
+    <BaseEntity x={x} y={y} className="-ml-10 -mt-[80px]" scale={1.2}>
+        <div className="flex flex-col items-center drop-shadow-xl">
+            {/* Mái nhà */}
+            <div className="w-0 h-0 border-l-[30px] border-l-transparent border-r-[30px] border-r-transparent border-b-[30px] border-b-rose-800"></div>
+            {/* Thân nhà */}
+            <div className="w-12 h-10 bg-amber-100 border-2 border-amber-900 relative">
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-6 bg-amber-950 rounded-t-sm"></div>
+            </div>
+        </div>
+    </BaseEntity>
+);
+
+// --- BUILDING ENTITY ---
 export const BuildingEntity: React.FC<{ x: number, y: number, type: 'grill' | 'counter' }> = ({ x, y, type }) => {
     const isGrill = type === 'grill';
     return (
         <BaseEntity x={x} y={y} className="-ml-10 -mt-[60px]" scale={1.5}>
             <div className={`w-16 h-16 relative rounded-lg border-4 ${isGrill ? 'bg-stone-700 border-stone-900' : 'bg-amber-700 border-amber-900'}`}>
-                {/* Mặt trên */}
                 <div className={`absolute top-0 left-0 w-full h-1/2 rounded-t-md ${isGrill ? 'bg-stone-600' : 'bg-amber-600'}`}></div>
-                {/* Hiệu ứng lửa cho lò nướng */}
                 {isGrill && <div className="absolute -top-4 left-1/2 -translate-x-1/2 animate-pulse text-red-500"><Flame size={24} fill="red" /></div>}
-                {/* Chân bàn (vẽ đơn giản) */}
                 <div className="absolute bottom-0 left-2 w-2 h-4 bg-black/50"></div>
                 <div className="absolute bottom-0 right-2 w-2 h-4 bg-black/50"></div>
             </div>
@@ -55,12 +65,12 @@ export const BuildingEntity: React.FC<{ x: number, y: number, type: 'grill' | 'c
     );
 };
 
-// --- WAREHOUSE ENTITY (Tự vẽ Kho gỗ) ---
+// --- WAREHOUSE ENTITY ---
 export const WarehouseEntity: React.FC<{ x: number, y: number }> = ({ x, y }) => (
     <BaseEntity x={x} y={y} className="-ml-16 -mt-[80px]" scale={1.2}>
-        <div className="w-24 h-24 relative rounded-xl border-4 bg-amber-800 border-amber-950 flex items-center justify-center">
+        <div className="w-24 h-24 relative rounded-xl border-4 bg-amber-800 border-amber-950 flex items-center justify-center shadow-lg">
             <div className="absolute top-0 left-0 w-full h-1/3 bg-amber-700 rounded-t-lg"></div>
-            <Package size={40} className="text-amber-200" />
+            <Package size={40} className="text-amber-200 z-10" />
             <div className="absolute bottom-1 text-[10px] font-bold text-amber-200">KHO GỖ</div>
         </div>
     </BaseEntity>
@@ -69,10 +79,9 @@ export const WarehouseEntity: React.FC<{ x: number, y: number }> = ({ x, y }) =>
 // --- LOOT ENTITY ---
 export const LootEntity: React.FC<{ x: number, y: number, type: 'meat' | 'gold' | 'ruby' }> = ({ x, y, type }) => {
     let icon;
-    // Vẫn dùng ảnh cho thịt và vàng vì nó đơn giản, nếu lỗi sẽ tính sau
     if (type === 'meat') icon = <SpriteImage id={SPRITE_IDS.LOOT_MEAT} className="w-8 h-8" />;
     else if (type === 'gold') icon = <SpriteImage id={SPRITE_IDS.LOOT_GOLD} className="w-8 h-8" />;
-    else if (type === 'ruby') icon = <Diamond size={20} className="text-red-500 fill-red-300 animate-pulse" />;
+    else icon = <Diamond size={20} className="text-red-500 fill-red-300 animate-pulse" />;
     return <div className="absolute anim-float z-20" style={{ left: x, top: y }}>{icon}</div>;
 };
 
@@ -87,7 +96,7 @@ export const MainHeroEntity: React.FC<{ x: number, y: number, state: string, fli
     </BaseEntity>
 );
 
-// Các entity khác giữ nguyên
+// --- CÁC ENTITY KHÁC ---
 export const HeroEntity: React.FC<{ x: number, y: number }> = ({ x, y }) => (<BaseEntity x={x} y={y} className="-ml-8 -mt-[80px]" scale={1.2} animType="walk"><SpriteImage id={SPRITE_IDS.HERO_ICE} className="w-16 h-16" /></BaseEntity>);
 export const CustomerEntity: React.FC<{ customer: Customer }> = ({ customer }) => (<BaseEntity x={customer.position.x} y={customer.position.y} className="-ml-6 -mt-[70px] anim-walk"><SpriteImage id={1} className="w-14 h-14" /></BaseEntity>);
 export const CivilianEntity: React.FC<{ civilian: Civilian }> = ({ civilian }) => (<BaseEntity x={civilian.position.x} y={civilian.position.y} className="-ml-6 -mt-[70px] anim-walk"><SpriteImage id={1} className="w-14 h-14 opacity-80" /></BaseEntity>);
