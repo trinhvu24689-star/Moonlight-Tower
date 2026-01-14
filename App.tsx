@@ -242,8 +242,6 @@ const App: React.FC = () => {
 
   return (
     <>
-      {/* --- MỚI: Bật cái này lên để test ảnh. Test xong xóa dòng này đi --- */}
-      <SpriteGallery />
       
       <OrientationLock /> {/* Add Orientation Lock Here */}
 
