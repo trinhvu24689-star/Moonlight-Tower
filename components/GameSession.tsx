@@ -20,7 +20,7 @@ import {
 } from '../types';
 import { 
   GAME_WIDTH, GAME_HEIGHT, 
-  COUNTER_POS, CUSTOMER_SPAWN, EXIT_POINT, // <-- Dùng CUSTOMER_SPAWN mới
+  COUNTER_POS, CUSTOMER_SPAWN, EXIT_POINT, 
   INITIAL_UPGRADES, CUSTOMER_SPEED, ENEMY_SPAWN, ENEMY_SPEED,
   TOWER_SLOTS, PROJECTILE_SPEED, GRILL_POS, HERO_POS,
   TOWER_TYPES, ENEMY_SPAWN_RATE, CROPS,
@@ -30,6 +30,9 @@ import {
 } from '../constants';
 import { soundManager } from '../utils/audio';
 
+// --- CÁC HÀM TIỆN ÍCH (HELPER FUNCTIONS) ---
+
+// 1. Rút gọn số (10k, 1tr...)
 const formatNumber = (num: number) => {
     if (num >= 1000000000) return (num / 1000000000).toFixed(1).replace('.0','') + ' tỷ';
     if (num >= 1000000) return (num / 1000000).toFixed(1).replace('.0','') + ' tr';
@@ -37,9 +40,14 @@ const formatNumber = (num: number) => {
     return num.toString();
 };
 
+// 2. Định dạng giờ (08:05) - ĐÂY LÀ HÀM BỊ THIẾU LÚC NÃY
+const formatTime = (h: number, m: number) => 
+    `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+
 interface WallSegment { id: number; y: number; hp: number; maxHp: number; }
 interface GameSessionProps { user: UserProfile; difficulty: GameDifficulty; onExit: (earnedGold: number, earnedRuby: number) => void; }
 
+// 3. Tính thời gian game
 const calculateGameTime = (): { season: Season, timeLeft: number, clock: GameClock } => {
     const now = new Date();
     const msToday = now.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -49,6 +57,7 @@ const calculateGameTime = (): { season: Season, timeLeft: number, clock: GameClo
     return { season: seasons[seasonIdx], timeLeft: 0, clock: { day: 1, month: 1, year: 1, hour: 12, minute: 0 } };
 };
 
+// --- COMPONENT CHÍNH ---
 export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onExit }) => {
   const isHardcore = difficulty === 'hardcore';
   const ENEMY_HP_MULTIPLIER = isHardcore ? 1.5 : 1.0;
@@ -457,6 +466,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
             {particles.map(p => <div key={p.id} className="absolute pointer-events-none font-black z-[100]" style={{ left: p.x, top: p.y, color: p.color, fontSize: p.size + 10, opacity: p.life, transform: 'translate(-50%, -50%)', textShadow: '1px 1px 0 #000' }}>{p.type === 'icon' || p.type === 'snow' || p.type === 'rain' || p.type === 'leaf' ? p.icon : p.text}</div>)}
             {ultimateActive && <div className="absolute inset-0 z-[200] pointer-events-none animate-pulse bg-red-500/20 flex items-center justify-center"><h1 className="text-6xl font-black text-red-500 drop-shadow-[0_4px_0_#000] animate-bounce">THIÊN THẠCH!!!</h1></div>}
 
+            {/* --- UI HUD --- */}
             <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-50">
                 <div className="flex justify-between items-start pointer-events-auto w-full">
                     <div className="flex gap-2 items-center">
@@ -471,6 +481,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
                 </div>
                 {guideMessage && <div className="absolute top-20 left-4 max-w-[250px] animate-in slide-in-from-left duration-500 pointer-events-none z-[60]"><div className="bg-stone-900/90 border-2 border-purple-500 p-3 rounded-xl rounded-tl-none shadow-xl flex flex-col"><p className="text-yellow-300 font-bold text-xs uppercase mb-1">Tiểu Quỷ mách:</p><p className="text-white text-sm font-medium leading-tight">{guideMessage}</p></div></div>}
                 
+                {/* Danh Sách Nhiệm Vụ */}
                 <div className="absolute top-16 left-4 flex flex-col gap-2 pointer-events-none">
                     {quests.map(q => (
                         <div key={q.id} className="bg-black/60 border-l-4 border-yellow-500 p-2 rounded w-48 text-white">
