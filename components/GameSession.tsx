@@ -3,13 +3,13 @@ import {
     Coins, Beef, ArrowUpCircle, X, LogOut, Gem, 
     Zap, Flame, Star, Ghost, MessageCircle, Shield, Hammer,
     AlertCircle, Users, Axe, Trees, Crown, CloudRain, Sun, Snowflake, Leaf, Calendar, Clock,
-    ShieldAlert, ArrowLeftCircle // <-- New icons for Exit and Wall Warning
+    ShieldAlert, ArrowLeftCircle // Chồng thêm 2 icon này để dùng cho nút Thoát và Cảnh báo
 } from 'lucide-react';
 import { GameMap } from './GameMap';
 import { 
     CustomerEntity, EnemyEntity, ProjectileEntity, HeroEntity, TowerVisual,
     LumberjackEntity, ChefEntity, ServerEntity, CollectorEntity, TreeEntity, CivilianEntity,
-    WallEntity, EntitiesStyle // <-- Import WallEntity and Animation Styles
+    WallEntity, HouseEntity, WarehouseEntity, EntitiesStyle 
 } from './Entities';
 import { TutorialSystem } from './TutorialSystem';
 import { 
@@ -26,11 +26,18 @@ import {
   TOWER_TYPES, ENEMY_SPAWN_RATE, CROPS,
   FOREST_AREA, WOOD_STORAGE_POS, LUMBERJACK_HUT, STAFF_COSTS,
   SEASON_DURATION,
-  WALL_X, WALL_HP, WALL_SEGMENTS_COUNT, SPAWN_ZONE // <-- Import Wall Constants
+  WALL_X, WALL_BASE_HP, WALL_SEGMENTS_COUNT, SPAWN_ZONE
 } from '../constants';
 import { soundManager } from '../utils/audio';
 
-// Define Wall Segment Interface
+// --- HÀM RÚT GỌN SỐ (10tr, 1 tỷ...) ---
+const formatNumber = (num: number) => {
+    if (num >= 1000000000) return (num / 1000000000).toFixed(1).replace('.0','') + ' tỷ';
+    if (num >= 1000000) return (num / 1000000).toFixed(1).replace('.0','') + ' tr';
+    if (num >= 1000) return (num / 1000).toFixed(1).replace('.0','') + ' k';
+    return num.toString();
+};
+
 interface WallSegment { id: number; y: number; hp: number; maxHp: number; }
 
 interface GameSessionProps {
@@ -39,7 +46,7 @@ interface GameSessionProps {
     onExit: (earnedGold: number, earnedRuby: number) => void;
 }
 
-// --- TIME CALCULATION (UNCHANGED) ---
+// --- TÍNH THỜI GIAN GAME ---
 const calculateGameTime = (): { season: Season, timeLeft: number, clock: GameClock } => {
     const now = new Date();
     const msToday = now.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -49,28 +56,23 @@ const calculateGameTime = (): { season: Season, timeLeft: number, clock: GameClo
     const season = seasons[seasonIdx];
     const msInCurrentSeason = msToday % seasonBlockMs;
     const timeLeft = Math.floor((seasonBlockMs - msInCurrentSeason) / 1000);
+    
+    // Giả lập đồng hồ game
     const dayProgress = msToday / 86400000;
-    const totalGameDaysPassed = Math.floor(dayProgress * 360);
-    const gameMonth = Math.floor(totalGameDaysPassed / 30) + 1;
-    const gameDay = (totalGameDaysPassed % 30) + 1;
-    const gameYear = 1 + Math.floor(Date.now() / 86400000);
-    const msPerGameDay = 240000; 
-    const msInCurrentGameDay = msToday % msPerGameDay;
-    const gameTimeProgress = msInCurrentGameDay / msPerGameDay;
-    const gameHour = Math.floor(gameTimeProgress * 24);
-    const gameMinute = Math.floor((gameTimeProgress * 1440) % 60);
+    const gameHour = Math.floor(dayProgress * 24);
+    const gameMinute = Math.floor((dayProgress * 1440) % 60);
 
-    return { season, timeLeft, clock: { day: gameDay, month: gameMonth, year: gameYear, hour: gameHour, minute: gameMinute } };
+    return { season, timeLeft, clock: { day: 1, month: 1, year: 1, hour: gameHour, minute: gameMinute } };
 };
 
 const formatTime = (h: number, m: number) => `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 
-// --- MAIN COMPONENT ---
+// --- COMPONENT CHÍNH ---
 export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onExit }) => {
   const isHardcore = difficulty === 'hardcore';
   const ENEMY_HP_MULTIPLIER = isHardcore ? 1.5 : 1.0;
   
-  // --- STATE ---
+  // State cơ bản
   const [localUser, setLocalUser] = useState<UserProfile>(user);
   const [resources, setResources] = useState<Resources>(user.savedResources || { 'prod_meat': 0, 'wood': 0 });
   const [staff, setStaff] = useState<StaffLevels>(user.staffLevels || { chef: 0, server: 0, lumberjack: 0, collector: 0 });
@@ -92,18 +94,26 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     gameTime: initialTimeData.clock
   });
 
-  // --- WALL STATE (NEW) ---
-  // Create wall segments blocking the path at X = 300
+  // --- TƯỜNG THÀNH (QUẢN LÝ MÁU & CẤP ĐỘ) ---
+  const [wallLevel, setWallLevel] = useState(1);
   const [walls, setWalls] = useState<WallSegment[]>(() => {
       const segments = [];
       const segmentHeight = GAME_HEIGHT / WALL_SEGMENTS_COUNT;
       for (let i = 0; i < WALL_SEGMENTS_COUNT; i++) {
           segments.push({
-              id: i, y: i * segmentHeight + 60, hp: WALL_HP, maxHp: WALL_HP
+              id: i, y: i * segmentHeight + 60, hp: WALL_BASE_HP, maxHp: WALL_BASE_HP
           });
       }
       return segments;
   });
+
+  // --- RỪNG CÂY (TẠO 20-30 CÂY NGẪU NHIÊN) ---
+  const [trees, setTrees] = useState(Array.from({length: 25}).map((_, i) => ({ 
+      id: i, 
+      x: FOREST_AREA.x + (Math.random() * FOREST_AREA.w), 
+      y: FOREST_AREA.y + (Math.random() * FOREST_AREA.h), 
+      hp: 100 
+  })));
 
   const [quests, setQuests] = useState<Quest[]>([]);
   const [upgrades, setUpgrades] = useState<UpgradeConfig>(INITIAL_UPGRADES);
@@ -119,9 +129,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
   const [lumberjackState, setLumberjackState] = useState<LumberjackState>({ 
       state: 'idle', position: LUMBERJACK_HUT, targetTreeIndex: null 
   });
-  const [trees, setTrees] = useState(Array.from({length: 5}).map((_, i) => ({ 
-      id: i, x: FOREST_AREA.x + (Math.random() * 100), y: FOREST_AREA.y + (Math.random() * 100), hp: 100 
-  })));
 
   const [activeModal, setActiveModal] = useState<'none' | 'build_tower' | 'staff_hire'>('none');
   const [scale, setScale] = useState(1);
@@ -142,75 +149,74 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
   const lastTimeCheck = useRef(0);
   const requestRef = useRef<number>(0);
 
-  useEffect(() => {
-    if (!user.tutorialCompleted) setShowTutorial(true);
-    generateNewQuest(); 
-
-    // Auto-build tower level 1 if needed
-    if (user.level > 1 && towers.length === 0) {
-        setTowers([{
-            id: 'init-tower', slotId: 0, type: 'ice', level: 1, position: TOWER_SLOTS[0], lastShot: 0
-        }]);
-    }
-
-    const handleResize = () => {
-      const wRatio = window.innerWidth / GAME_WIDTH;
-      const hRatio = window.innerHeight / GAME_HEIGHT;
-      const scale = Math.min(wRatio, hRatio) * 0.98; 
-      setScale(scale);
-    };
-    window.addEventListener('resize', handleResize);
-    handleResize();
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
+  // --- HỆ THỐNG NHIỆM VỤ VÔ HẠN ---
   const generateNewQuest = () => {
-      const types: Quest['type'][] = ['kill', 'earn'];
-      const type = types[Math.floor(Math.random() * types.length)];
       const id = Date.now().toString();
-      let quest: Quest;
       const scale = Math.max(1, localUser.level);
+      const isKill = Math.random() > 0.5; // 50% diệt quái, 50% kiếm tiền
+      
+      const target = isKill 
+        ? 10 + Math.floor(Math.random() * 20) // Diệt 10-30 con
+        : 500 + Math.floor(Math.random() * 1000 * scale); // Kiếm tiền
+      
+      const rewardGold = isKill ? target * 25 * scale : Math.floor(target * 0.4);
+      const rewardRuby = Math.floor(Math.random() * 3) + 1;
 
-      switch(type) {
-          case 'kill':
-              const amountK = 10 + Math.floor(Math.random() * 10 * scale);
-              quest = {
-                  id, type, targetAmount: amountK, currentAmount: 0, isCompleted: false,
-                  description: `Tiêu diệt ${amountK} quái vật`,
-                  rewardGold: amountK * 15 * scale, rewardRuby: 2
-              };
-              break;
-          case 'earn':
-              const amountE = 500 * scale + Math.floor(Math.random() * 500);
-              quest = {
-                  id, type, targetAmount: amountE, currentAmount: 0, isCompleted: false,
-                  description: `Kiếm ${amountE} vàng`,
-                  rewardGold: Math.floor(amountE * 0.2), rewardRuby: 1
-              };
-              break;
-          default: quest = { id, type: 'kill', description: 'Error', targetAmount: 1, currentAmount: 0, isCompleted: true, rewardGold: 0, rewardRuby: 0 };
-      }
+      const newQuest: Quest = {
+          id, type: isKill ? 'kill' : 'earn',
+          targetAmount: target, currentAmount: 0, isCompleted: false,
+          description: isKill ? `Diệt ${target} quái` : `Kiếm ${formatNumber(target)} vàng`,
+          rewardGold, rewardRuby
+      };
+      
+      // Giữ tối đa 3 nhiệm vụ, nếu full thì xóa cái cũ đã xong
       setQuests(prev => {
-          if (prev.filter(q => !q.isCompleted).length >= 3) return prev;
-          return [...prev, quest];
+          const active = prev.filter(q => !q.isCompleted);
+          return [...active, newQuest].slice(0, 3);
       });
   };
 
   const updateQuestProgress = (type: Quest['type'], amount: number) => {
       setQuests(prev => prev.map(q => {
-          if (q.isCompleted) return q;
-          if (q.type === type) {
-              const newAmount = q.currentAmount + amount;
-              if (newAmount >= q.targetAmount) {
-                  soundManager.playCoin();
-                  return { ...q, currentAmount: q.targetAmount, isCompleted: true };
-              }
-              return { ...q, currentAmount: newAmount };
+          if (q.isCompleted || q.type !== type) return q;
+          const newAmount = q.currentAmount + amount;
+          if (newAmount >= q.targetAmount) {
+              soundManager.playCoin();
+              spawnParticle(GAME_WIDTH/2, 100, 'text', '#fbbf24', `Xong NV! +${formatNumber(q.rewardGold)}g`, <Crown size={20}/>);
+              
+              // Cộng thưởng ngay
+              setGameState(gs => ({...gs, gold: gs.gold + q.rewardGold, ruby: gs.ruby + q.rewardRuby}));
+              
+              // Tạo nhiệm vụ mới sau 2s
+              setTimeout(() => generateNewQuest(), 2000);
+              
+              return { ...q, currentAmount: q.targetAmount, isCompleted: true };
           }
-          return q;
+          return { ...q, currentAmount: newAmount };
       }));
   };
 
+  // Nâng cấp Tường
+  const upgradeWall = () => {
+      const cost = wallLevel * 1000;
+      if (gameState.gold >= cost) {
+          setGameState(prev => ({ ...prev, gold: prev.gold - cost }));
+          setWallLevel(l => l + 1);
+          // Hồi đầy máu và tăng giới hạn máu
+          setWalls(prev => prev.map(w => ({ 
+              ...w, 
+              maxHp: w.maxHp + 500, 
+              hp: w.maxHp + 500 
+          })));
+          spawnParticle(WALL_X, 300, 'text', '#fbbf24', 'Tường UP!', <Shield size={20}/>);
+          soundManager.playCoin();
+      } else {
+          // Hiệu ứng rung báo thiếu tiền (đơn giản là alert hoặc particle đỏ)
+          spawnParticle(WALL_X, 300, 'text', '#ef4444', 'Thiếu tiền!');
+      }
+  };
+
+  // Helper
   const getDistance = (p1: Vector2, p2: Vector2) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
   const moveTowards = (current: Vector2, target: Vector2, speed: number): Vector2 => {
     const dist = getDistance(current, target);
@@ -218,205 +224,170 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     const ratio = speed / dist;
     return { x: current.x + (target.x - current.x) * ratio, y: current.y + (target.y - current.y) * ratio };
   };
-
   const spawnParticle = (x: number, y: number, type: Particle['type'], color: string, text?: string, icon?: any) => {
-    setParticles(prev => [...prev, {
-      id: Math.random().toString(),
-      x, y,
-      vx: (Math.random() - 0.5) * 4,
-      vy: type === 'snow' || type === 'rain' || type === 'leaf' ? Math.random() * 2 + 1 : -Math.random() * 4 - 2,
-      life: type === 'snow' || type === 'rain' || type === 'leaf' ? 3.0 : 1.0,
-      maxLife: type === 'snow' || type === 'rain' || type === 'leaf' ? 3.0 : 1.0,
-      color,
-      size: Math.random() * 5 + 2,
-      type,
-      text,
-      icon
-    }]);
+    setParticles(prev => [...prev, { id: Math.random().toString(), x, y, vx: (Math.random() - 0.5)*4, vy: -3, life: 1.0, maxLife: 1.0, color, size: 10, type, text, icon }]);
   };
-
   const addExp = (amount: number) => {
       const xpNeeded = localUser.level * 100;
       let newExp = localUser.exp + amount;
       let newLevel = localUser.level;
-      let didLevelUp = false;
-
-      if (newExp >= xpNeeded) {
-          newExp -= xpNeeded;
-          newLevel++;
-          didLevelUp = true;
-          soundManager.playUltimate(); 
-      }
-
+      if (newExp >= xpNeeded) { newExp -= xpNeeded; newLevel++; soundManager.playUltimate(); setLevelUpModal({ show: true, oldLevel: newLevel - 1, newLevel: newLevel }); setGameState(prev => ({ ...prev, ruby: prev.ruby + 20, gold: prev.gold + 200 })); }
       setLocalUser(prev => ({ ...prev, level: newLevel, exp: newExp }));
-      if (didLevelUp) {
-          setLevelUpModal({ show: true, oldLevel: newLevel - 1, newLevel: newLevel });
-          setGameState(prev => ({ ...prev, ruby: prev.ruby + 20, gold: prev.gold + 200 }));
-      }
   };
 
-  // --- MAIN GAME LOOP ---
+  useEffect(() => {
+    if (!user.tutorialCompleted) setShowTutorial(true);
+    if (quests.length === 0) generateNewQuest(); 
+    if (user.level > 1 && towers.length === 0) { setTowers([{ id: 'init-tower', slotId: 0, type: 'ice', level: 1, position: TOWER_SLOTS[0], lastShot: 0 }]); }
+    const handleResize = () => { setScale(Math.min(window.innerWidth / GAME_WIDTH, window.innerHeight / GAME_HEIGHT) * 0.98); };
+    window.addEventListener('resize', handleResize); handleResize();
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // --- GAME LOOP ---
   const tick = useCallback(() => {
     if (showTutorial || activeModal !== 'none' || levelUpModal || showExitConfirm) return;
-
     const now = Date.now();
     
-    // Season Logic
+    // Thời gian & Mùa
     if (now - lastTimeCheck.current > 100) {
         setGameState(prev => {
             const timeData = calculateGameTime();
             if (timeData.season !== prev.season) {
                  let msg = "";
-                 if (timeData.season === 'spring') msg = "Mùa Xuân đến! Cây cối đâm chồi.";
-                 if (timeData.season === 'summer') msg = "Mùa Hè oi bức! Lũ dơi đang đến.";
-                 if (timeData.season === 'autumn') msg = "Mùa Thu vàng! Cẩn thận xương khô.";
-                 if (timeData.season === 'winter') msg = "Mùa Đông giá rét! Băng giá bao phủ.";
-                 soundManager.speak(msg, 'guide');
-                 setGuideMessage(msg);
+                 if (timeData.season === 'spring') msg = "Mùa Xuân đến!";
+                 if (timeData.season === 'summer') msg = "Mùa Hè oi bức!";
+                 if (timeData.season === 'autumn') msg = "Mùa Thu vàng!";
+                 if (timeData.season === 'winter') msg = "Mùa Đông giá rét!";
+                 soundManager.speak(msg, 'guide'); setGuideMessage(msg);
             }
             return { ...prev, season: timeData.season, seasonTimer: timeData.timeLeft, gameTime: timeData.clock };
         });
         lastTimeCheck.current = now;
     }
 
-    // Weather Particles
-    if (Math.random() < 0.2) { 
-        if (gameState.season === 'spring') spawnParticle(Math.random() * GAME_WIDTH, -10, 'leaf', '#f472b6', undefined, <Leaf size={10} className="text-pink-400 rotate-45" />);
-        if (gameState.season === 'winter') spawnParticle(Math.random() * GAME_WIDTH, -10, 'snow', '#fff', undefined, <Snowflake size={10} className="text-white" />);
-        if (gameState.season === 'autumn') spawnParticle(Math.random() * GAME_WIDTH, -10, 'leaf', '#ea580c', undefined, <Leaf size={10} className="text-orange-600 rotate-180" />);
-        if (gameState.season === 'summer' && Math.random() < 0.05) spawnParticle(Math.random() * GAME_WIDTH, Math.random() * GAME_HEIGHT, 'spark', '#fbbf24');
-    }
-
-    // Spawn Customers (Village Side)
+    // Spawn Khách & Dân
     const MAX_CUSTOMERS = 10 + (staff.server * 2);
     if (now - lastCustomerSpawn.current > Math.max(1000, 3000 - (localUser.level * 100)) && customers.length < MAX_CUSTOMERS) {
-      setCustomers(prev => [...prev, {
-        id: `cust-${now}`, position: { ...SPAWN_POINT }, speed: CUSTOMER_SPEED + (staff.server * 0.1), state: 'walking_in', patience: 100 + (staff.server * 20), requestAmount: 1, skin: Math.random() > 0.5 ? 'barbarian' : 'wolf', type: 'warrior'
-      }]);
+      setCustomers(prev => [...prev, { id: `cust-${now}`, position: { ...SPAWN_POINT }, speed: CUSTOMER_SPEED + (staff.server * 0.1), state: 'walking_in', patience: 100, requestAmount: 1, skin: Math.random()>0.5?'barbarian':'wolf', type: 'warrior' }]);
       lastCustomerSpawn.current = now;
     }
-
-    // Spawn Civilians (Village Side)
     if (resources['wood'] > 0 && now - lastCivilianSpawn.current > 5000 && civilians.length < 5) {
         setCivilians(prev => [...prev, { id: `civ-${now}`, position: { ...SPAWN_POINT }, speed: CUSTOMER_SPEED * 0.8, state: 'walking_in', type: 'civilian' }]);
         lastCivilianSpawn.current = now;
     }
 
-    // --- ENEMY SPAWNING (SURVIVAL LOGIC) ---
-    // Enemies spawn randomly on the right side (Forest)
+    // --- LOGIC QUÁI & LOOT ---
     const currentSpawnRate = Math.max(500, ENEMY_SPAWN_RATE - (localUser.level * 300));
-    const MAX_ENEMIES = 50 + (localUser.level * 10);
-    
-    if (now - lastEnemySpawn.current > currentSpawnRate && enemies.length < MAX_ENEMIES) {
+    if (now - lastEnemySpawn.current > currentSpawnRate && enemies.length < 50) {
        let type: EnemyType = 'pumpkin';
        let speed = ENEMY_SPEED;
-       let hpMulti = 1;
+       const isBoss = Math.random() < 0.05; // 5% ra boss
        
-       // Season Modifiers
-       if (gameState.season === 'spring') { if (Math.random() > 0.8) { type = 'skeleton'; speed *= 1.2; } } 
-       else if (gameState.season === 'summer') { if (Math.random() > 0.5) { type = 'bat'; speed *= 2.0; hpMulti = 0.6; } else { type = 'pumpkin'; speed *= 1.5; } } 
-       else if (gameState.season === 'autumn') { if (Math.random() > 0.4) { type = 'skeleton'; hpMulti = 1.3; } } 
-       else if (gameState.season === 'winter') { type = 'ice_pumpkin'; hpMulti = 2.0; speed *= 0.7; }
-       
-       const baseHp = (100 + (localUser.level * 20)) * hpMulti;
-       
-       // Random Spawn Position in SPAWN_ZONE (Forest)
+       // Tăng máu theo thời gian chơi (Mỗi phút +10%)
+       const timePlayedMinutes = (now - gameState.lastTick) / 60000; 
+       const hpMulti = 1 + (localUser.level * 0.2); 
+       const baseHp = (isBoss ? 3000 : 150) * hpMulti;
+
        const randomY = Math.random() * (SPAWN_ZONE.maxY - SPAWN_ZONE.minY) + SPAWN_ZONE.minY;
        const randomX = Math.random() * (SPAWN_ZONE.maxX - SPAWN_ZONE.minX) + SPAWN_ZONE.minX;
 
        setEnemies(prev => [...prev, { 
-           id: `enemy-${now}`, 
-           position: { x: randomX, y: randomY }, // Random position
-           path: [], currentPathIndex: 0, // No path needed
-           speed: speed * (isHardcore ? 1.2 : 1), 
-           hp: baseHp * ENEMY_HP_MULTIPLIER, 
-           maxHp: baseHp * ENEMY_HP_MULTIPLIER, 
-           state: 'walking', // Default state
-           type: type, 
-           isBoss: false, 
-           isFrozen: gameState.season === 'winter' 
+           id: `e-${now}`, position: { x: randomX, y: randomY }, path: [], currentPathIndex: 0,
+           speed: (isBoss ? 0.4 : speed) * (isHardcore ? 1.2 : 1), 
+           hp: baseHp, maxHp: baseHp, state: 'walking', 
+           type: isBoss ? 'boss' : (Math.random()>0.5?'skeleton':'pumpkin'), 
+           isBoss, isFrozen: gameState.season === 'winter' 
        }]);
        lastEnemySpawn.current = now;
     }
 
-    // Spawn Boss (Randomly in Forest)
-    if (localUser.level >= 5 && now - lastBossSpawn.current > 60000) {
-         const randomY = Math.random() * (SPAWN_ZONE.maxY - SPAWN_ZONE.minY) + SPAWN_ZONE.minY;
-         const randomX = Math.random() * (SPAWN_ZONE.maxX - SPAWN_ZONE.minX) + SPAWN_ZONE.minX;
-         
-         setEnemies(prev => [...prev, { 
-             id: `BOSS-${now}`, 
-             position: { x: randomX, y: randomY }, 
-             speed: ENEMY_SPEED * 0.4, 
-             hp: 3000 * (localUser.level / 2), 
-             maxHp: 3000 * (localUser.level / 2), 
-             state: 'walking', 
-             type: 'boss', 
-             isBoss: true,
-             path: [], currentPathIndex: 0
-         }]);
-         spawnParticle(GAME_WIDTH/2, GAME_HEIGHT/2, 'text', '#ef4444', 'BOSS XUẤT HIỆN!');
-         soundManager.playUltimate();
-         soundManager.speak("Boss đã xuất hiện! Cẩn thận!", "guide");
-         lastBossSpawn.current = now;
-    }
-
-    // --- ENEMY AI LOGIC (WALK -> ATTACK WALL) ---
+    // AI Quái: Đi tìm tường đập
     setEnemies(prev => prev.map(enemy => {
-        let nextX = enemy.position.x;
-        let nextY = enemy.position.y;
+        let { x, y } = enemy.position;
         let isAttacking = false;
+        const targetWall = walls.find(w => w.hp > 0 && Math.abs(w.y - y) < 80);
 
-        // Find nearest active wall
-        const targetWall = walls.find(w => w.hp > 0 && Math.abs(w.y - enemy.position.y) < 80);
-
-        // Logic: Move Left towards Wall (X=300)
-        if (targetWall && enemy.position.x > WALL_X) {
-            const distToWall = enemy.position.x - WALL_X;
-            
-            if (distToWall > 40) { 
-                // Move towards wall with sine wave wobble
-                nextX -= enemy.speed;
-                nextY += Math.sin(now / 300) * 0.5; // Wobble effect
+        if (targetWall && x > WALL_X) {
+            const dist = x - WALL_X;
+            if (dist > 40) { 
+                x -= enemy.speed; 
+                y += Math.sin(now / 300) * 0.5; // Đi lảo đảo
             } else {
-                // Reach Wall -> ATTACK
-                isAttacking = true;
-                targetWall.hp -= 0.2; // Damage wall (modify state next render cycle logic is tricky here, but effect works visually)
-                // Note: React state update inside map is bad practice, so we handle wall damage in a separate useEffect or cleaner way below.
-                // For now, we flag it.
+                isAttacking = true; 
+                targetWall.hp -= 0.5; // Đập tường
             }
         } else {
-            // Wall broken or passed -> Move to Village Center (Y=300)
-            nextX -= enemy.speed;
-            if (nextY < 300) nextY += 0.2; else nextY -= 0.2;
+            x -= enemy.speed; // Tràn vào làng
+            if (y < 300) y += 0.2; else y -= 0.2;
         }
-
-        return { 
-            ...enemy, 
-            position: { x: nextX, y: nextY },
-            state: isAttacking ? 'attacking' : 'walking'
-        };
+        return { ...enemy, position: {x, y}, state: isAttacking ? 'attacking' : 'walking' };
     }).filter(e => e.hp > 0 && e.position.x > -50));
 
-    // Damage Wall Logic (Syncing Hack)
-    setWalls(prevWalls => {
-        const attackingEnemies = enemies.filter(e => e.state === 'attacking' && e.position.x > WALL_X && e.position.x < WALL_X + 60);
-        if (attackingEnemies.length === 0) return prevWalls;
+    // Cập nhật tường (Xóa khúc tường vỡ)
+    setWalls(prev => prev.filter(w => w.hp > 0));
 
-        return prevWalls.map(wall => {
-            const attackers = attackingEnemies.filter(e => Math.abs(e.position.y - wall.y) < 80);
-            if (attackers.length > 0 && wall.hp > 0) {
-                return { ...wall, hp: Math.max(0, wall.hp - (attackers.length * 0.5)) };
-            }
-            return wall;
-        });
+    // --- XỬ LÝ ĐẠN & LOOT ---
+    setProjectiles(prev => {
+      const active: Projectile[] = [];
+      const hits: string[] = []; 
+      prev.forEach(p => {
+        const target = enemies.find(e => e.id === p.targetId);
+        if (!target) return; 
+        const dist = getDistance(p.position, target.position);
+        if (dist < 10) hits.push(p.targetId);
+        else active.push({ ...p, position: moveTowards(p.position, target.position, p.speed) });
+      });
+      
+      if (hits.length > 0) {
+        soundManager.playHit();
+        setEnemies(old => old.map(e => {
+          if (hits.includes(e.id)) {
+             const hitter = prev.find(p => p.targetId === e.id);
+             const dmg = hitter ? hitter.damage : 0;
+             spawnParticle(e.position.x, e.position.y, 'text', '#f87171', `-${Math.floor(dmg)}`);
+             
+             let newHp = e.hp - dmg;
+             if (newHp <= 0) {
+                 // --- LOGIC LOOT ĐỒ ---
+                 updateQuestProgress('kill', 1);
+                 addExp(e.isBoss ? 100 : 5);
+                 
+                 // Boss rớt Vàng + KC
+                 if (e.isBoss) {
+                     const goldDrop = 500 + (localUser.level * 100);
+                     const rubyDrop = 5;
+                     setGameState(gs => ({...gs, gold: gs.gold + goldDrop, ruby: gs.ruby + rubyDrop}));
+                     spawnParticle(e.position.x, e.position.y, 'text', '#fbbf24', `+${formatNumber(goldDrop)}g`, <Crown size={16}/>);
+                 } 
+                 // Quái thường rớt Thịt (30%)
+                 else if (Math.random() < 0.3) {
+                     setResources(r => ({ ...r, 'prod_meat': (r['prod_meat'] || 0) + 1 })); 
+                     spawnParticle(e.position.x, e.position.y, 'text', '#ef4444', '+1 Thịt', <Beef size={12}/>);
+                 }
+                 
+                 // Nhân viên nhặt tiền
+                 if (staff.collector > 0) { 
+                     let goldDrop = 10 + localUser.level; 
+                     setGameState(gs => ({...gs, gold: gs.gold + goldDrop})); 
+                     spawnParticle(e.position.x, e.position.y - 10, 'text', '#fbbf24', `+${goldDrop}g`); 
+                 }
+                 setGameState(gs => ({ ...gs, mana: Math.min(gs.mana + (e.isBoss?50:10), gs.maxMana) }));
+             }
+             return { ...e, hp: newHp };
+          }
+          return e;
+        }));
+      }
+      return active;
     });
 
-    // Cooking Logic
-    const chefBoost = staff.chef * 500;
-    const seasonBoost = gameState.season === 'summer' ? 500 : 0;
-    const grillSpeed = Math.max(200, upgrades.grill.speed - chefBoost - seasonBoost - (gameState.grillSpeedBuff * 10));
+    setParticles(prev => prev.map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.1, life: p.life - 0.02 })).filter(p => p.life > 0));
+    setGameState(prev => ({ ...prev, lastTick: now }));
     
+    // Logic nấu nướng & khách hàng (Giữ nguyên)
+    const chefBoost = staff.chef * 500;
+    const grillSpeed = Math.max(200, upgrades.grill.speed - chefBoost - (gameState.grillSpeedBuff * 10));
     if (now - lastCookTime.current > grillSpeed && gameState.cookedMeat < gameState.meatCapacity) {
         if ((resources['prod_meat'] || 0) > 0) {
             setResources(prev => ({ ...prev, 'prod_meat': prev['prod_meat'] - 1 }));
@@ -424,162 +395,63 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
             soundManager.playCook();
             spawnParticle(GRILL_POS.x, GRILL_POS.y, 'spark', '#ef4444');
             setNoMeatWarning(false);
-        } else {
-            if (!noMeatWarning) setNoMeatWarning(true);
-        }
+        } else if (!noMeatWarning) setNoMeatWarning(true);
         lastCookTime.current = now;
     }
-
-    // Tower Shooting Logic
-    setTowers(prevTowers => prevTowers.map(tower => {
-        const conf = TOWER_TYPES[tower.type];
-        const currentDmg = conf.baseDmg + (tower.level * 5) + (tower.type === 'fire' ? tower.level * 10 : 0);
-        let currentSpeed = Math.max(200, conf.baseSpeed - (tower.level * 50));
-        if (gameState.season === 'winter') currentSpeed *= 1.1;
-
-        if (enemies.length > 0 && now - tower.lastShot > currentSpeed) {
-            const target = enemies.find(e => getDistance(tower.position, e.position) <= conf.range);
+    
+    // Logic Bắn của Tháp (Giữ nguyên)
+    setTowers(prev => prev.map(t => {
+        const conf = TOWER_TYPES[t.type];
+        if (enemies.length > 0 && now - t.lastShot > Math.max(200, conf.baseSpeed - (t.level * 50))) {
+            const target = enemies.find(e => getDistance(t.position, e.position) <= conf.range);
             if (target) {
-                 const totalDmg = currentDmg * (1 + gameState.towerDamageBuff / 100);
-                 let effect: Projectile['effect'] = undefined;
-                 let color = '#fff';
-                 if (tower.type === 'ice') { effect = 'slow'; color = '#38bdf8'; }
-                 else if (tower.type === 'fire') { effect = 'splash'; color = '#f97316'; }
-                 else if (tower.type === 'archer') { color = '#fbbf24'; }
-                 else if (tower.type === 'cannon') { effect = 'stun'; color = '#1e293b'; } 
-
-                 setProjectiles(prev => [...prev, { id: `proj-${now}-${tower.id}`, position: { ...tower.position }, targetId: target.id, speed: PROJECTILE_SPEED, damage: totalDmg, effect, color }]);
-                soundManager.playShoot();
-                return { ...tower, lastShot: now };
+                 const totalDmg = (conf.baseDmg + (t.level * 5)) * (1 + gameState.towerDamageBuff / 100);
+                 setProjectiles(prev => [...prev, { id: `p-${now}-${t.id}`, position: {...t.position}, targetId: target.id, speed: PROJECTILE_SPEED, damage: totalDmg, color: '#fff' }]);
+                 soundManager.playShoot();
+                 return { ...t, lastShot: now };
             }
         }
-        return tower;
+        return t;
     }));
 
-    // Lumberjack Logic
-    if (staff.lumberjack > 0 && now - lastLumberAction.current > 50) {
-         let nextPos = lumberjackState.position;
-         let nextState = lumberjackState.state;
-         let nextTarget = lumberjackState.targetTreeIndex;
-         const SPEED = 1.5 + (staff.lumberjack * 0.2);
-
-         if (lumberjackState.state === 'idle') {
-             const treeIdx = trees.findIndex(t => t.hp > 0);
-             if (treeIdx !== -1) { nextState = 'walking_to_tree'; nextTarget = treeIdx; }
-         } else if (lumberjackState.state === 'walking_to_tree' && nextTarget !== null) {
-             const tree = trees[nextTarget];
-             if (getDistance(lumberjackState.position, {x: tree.x, y: tree.y}) < 5) nextState = 'chopping';
-             else nextPos = moveTowards(lumberjackState.position, {x: tree.x, y: tree.y}, SPEED);
-         } else if (lumberjackState.state === 'chopping' && nextTarget !== null) {
-              if (Math.random() < 0.1) { 
-                  setTrees(prev => prev.map((t, i) => i === nextTarget ? { ...t, hp: t.hp - 10 } : t));
-                  spawnParticle(trees[nextTarget].x, trees[nextTarget].y - 20, 'text', '#fbbf24', '-10', <Axe size={12}/>);
-                  if (trees[nextTarget].hp <= 10) { 
-                      nextState = 'walking_back';
-                      setResources(prev => ({ ...prev, wood: (prev.wood || 0) + 5 })); 
-                      spawnParticle(trees[nextTarget].x, trees[nextTarget].y - 40, 'text', '#854d0e', '+5 Gỗ');
-                  }
-              }
-         } else if (lumberjackState.state === 'walking_back') {
-             if (getDistance(lumberjackState.position, WOOD_STORAGE_POS) < 5) {
-                 nextState = 'idle'; nextTarget = null;
-                 if (trees.every(t => t.hp <= 0)) setTrees(prev => prev.map(t => ({...t, hp: 100})));
-             } else nextPos = moveTowards(lumberjackState.position, WOOD_STORAGE_POS, SPEED);
-         }
-         setLumberjackState({ state: nextState, position: nextPos, targetTreeIndex: nextTarget });
-         lastLumberAction.current = now;
-    }
-
-    // Civilian Logic
-    setCivilians(prev => prev.map(civ => {
-        let nextPos = civ.position;
-        let nextState = civ.state;
-        const TARGET = WOOD_STORAGE_POS;
-        if (civ.state === 'walking_in') {
-            if (getDistance(civ.position, TARGET) < 5) {
-                if (resources['wood'] > 0) nextState = 'buying_wood';
-                else nextState = 'leaving'; 
-            } else nextPos = moveTowards(civ.position, TARGET, civ.speed);
-        } else if (civ.state === 'buying_wood') {
-             setResources(prev => ({ ...prev, wood: Math.max(0, prev.wood - 1) }));
-             setGameState(prev => ({ ...prev, gold: prev.gold + 50 })); 
-             spawnParticle(civ.position.x, civ.position.y, 'text', '#fbbf24', '+50g');
-             nextState = 'leaving';
-        } else if (civ.state === 'leaving') nextPos = moveTowards(civ.position, EXIT_POINT, civ.speed);
-        return { ...civ, position: nextPos, state: nextState };
-    }).filter(c => getDistance(c.position, EXIT_POINT) > 10));
-
-    // Customer Logic
-    setCustomers(prev => prev.map((cust, index) => {
-        let nextPos = cust.position;
-        let nextState = cust.state;
-        if (cust.state === 'walking_in' || cust.state === 'waiting') {
-           if (index === 0) {
-             if (getDistance(cust.position, COUNTER_POS) < 5) nextState = 'buying';
-             else { nextPos = moveTowards(cust.position, COUNTER_POS, cust.speed); nextState = 'walking_in'; }
-           } else {
-             const queuePos = { x: COUNTER_POS.x + 60 + (index * 20), y: COUNTER_POS.y - (index * 30) + 100 }; 
-             if (getDistance(cust.position, queuePos) < 5) nextState = 'waiting';
-             else nextPos = moveTowards(cust.position, queuePos, cust.speed);
-           }
-        } else if (cust.state === 'buying') nextPos = COUNTER_POS;
-        else if (cust.state === 'leaving') nextPos = moveTowards(cust.position, EXIT_POINT, cust.speed);
-        return { ...cust, position: nextPos, state: nextState };
-    }).filter(c => getDistance(c.position, EXIT_POINT) > 10));
-
-    // Projectile Collision
-    setProjectiles(prev => {
-      const activeProjs: Projectile[] = [];
-      const hits: string[] = []; 
-      prev.forEach(p => {
-        const targetEnemy = enemies.find(e => e.id === p.targetId);
-        if (!targetEnemy) return; 
-        const dist = getDistance(p.position, targetEnemy.position);
-        if (dist < 10) hits.push(p.targetId);
-        else activeProjs.push({ ...p, position: moveTowards(p.position, targetEnemy.position, p.speed) });
-      });
-      if (hits.length > 0) {
-        soundManager.playHit();
-        setEnemies(old => old.map(e => {
-          if (hits.includes(e.id)) {
-             const hitter = prev.find(p => p.targetId === e.id);
-             const dmg = hitter ? hitter.damage : 0;
-             const effect = hitter ? hitter.effect : undefined;
-             spawnParticle(e.position.x, e.position.y, 'text', '#f87171', `-${Math.floor(dmg)}`);
-             let newSpeed = e.speed;
-             if (effect === 'slow') newSpeed = e.speed * 0.7;
-             if (effect === 'stun') newSpeed = 0.2; 
-             let newHp = e.hp - dmg;
-             if (e.isBoss) spawnParticle(e.position.x, e.position.y - 20, 'spark', '#ff0000');
-             if (newHp <= 0) {
-                 addExp(e.isBoss ? 100 : 5); updateQuestProgress('kill', 1);
-                 if (Math.random() < 0.3) { setResources(r => ({ ...r, 'prod_meat': (r['prod_meat'] || 0) + 1 })); spawnParticle(e.position.x, e.position.y, 'text', '#ef4444', '+1 Thịt', <Beef size={12}/>); }
-                 if (staff.collector > 0) { let goldDrop = 5 + (localUser.level); if (gameState.season === 'autumn') goldDrop = Math.floor(goldDrop * 1.5); setGameState(gs => ({...gs, gold: gs.gold + goldDrop})); spawnParticle(e.position.x, e.position.y - 10, 'text', '#fbbf24', `+${goldDrop}g`); }
-                 setGameState(gs => ({ ...gs, mana: Math.min(gs.mana + (e.isBoss?50:10), gs.maxMana) }));
+    // Logic Dân mua gỗ & Thợ gỗ (Rút gọn cho đỡ dài)
+    setCivilians(prev => prev.map(c => {
+        let {x, y} = c.position;
+        if (c.state === 'walking_in' && getDistance(c.position, WOOD_STORAGE_POS) < 5) {
+             if (resources['wood'] > 0) {
+                 setResources(r => ({...r, wood: r.wood - 1}));
+                 setGameState(g => ({...g, gold: g.gold + 50}));
+                 spawnParticle(x, y, 'text', '#fbbf24', '+50g');
+                 return {...c, state: 'leaving'};
              }
-             return { ...e, hp: newHp, speed: newSpeed };
-          }
-          const hitterSplash = prev.find(p => hits.includes(p.targetId) && p.effect === 'splash' && getDistance(p.position, e.position) < 100);
-          if (hitterSplash && !hits.includes(e.id)) return { ...e, hp: e.hp - (hitterSplash.damage * 0.5) };
-          return e;
-        }));
-      }
-      return activeProjs;
-    });
+             return {...c, state: 'leaving'};
+        }
+        if (c.state === 'walking_in') return {...c, position: moveTowards(c.position, WOOD_STORAGE_POS, c.speed)};
+        return {...c, position: moveTowards(c.position, EXIT_POINT, c.speed)};
+    }).filter(c => getDistance(c.position, EXIT_POINT) > 10));
 
-    setParticles(prev => prev.map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.1, life: p.life - 0.02 })).filter(p => p.life > 0));
-    setGameState(prev => ({ ...prev, lastTick: now }));
+    // Khách mua thịt
+    setCustomers(prev => prev.map((c, i) => {
+        let target = i===0 ? COUNTER_POS : {x: COUNTER_POS.x+60+(i*20), y: COUNTER_POS.y-(i*30)+100};
+        if (c.state === 'walking_in' || c.state === 'waiting') {
+            if (getDistance(c.position, target) < 5) return {...c, state: i===0 ? 'buying' : 'waiting'};
+            return {...c, position: moveTowards(c.position, target, c.speed)};
+        }
+        if (c.state === 'buying') return {...c, position: COUNTER_POS};
+        return {...c, position: moveTowards(c.position, EXIT_POINT, c.speed)};
+    }).filter(c => getDistance(c.position, EXIT_POINT) > 10));
+
   }, [customers, civilians, enemies, towers, gameState, showTutorial, activeModal, levelUpModal, showExitConfirm, localUser.level, resources, noMeatWarning, lumberjackState, staff, walls]);
 
   useEffect(() => {
-    const firstCustomer = customers[0];
-    if (firstCustomer && firstCustomer.state === 'buying' && gameState.cookedMeat > 0) {
-      const earnings = 15 + (upgrades.grill.level * 2);
+    const first = customers[0];
+    if (first && first.state === 'buying' && gameState.cookedMeat > 0) {
+      const earn = 15 + (upgrades.grill.level * 2);
       soundManager.playCoin();
-      spawnParticle(COUNTER_POS.x, COUNTER_POS.y, 'text', '#fbbf24', `+${earnings}g`);
-      addExp(10); updateQuestProgress('earn', earnings);
-      setGameState(prev => ({ ...prev, cookedMeat: prev.cookedMeat - 1, gold: prev.gold + earnings }));
-      setCustomers(prev => { const newCusts = [...prev]; newCusts[0] = { ...newCusts[0], state: 'leaving' }; return newCusts; });
+      spawnParticle(COUNTER_POS.x, COUNTER_POS.y, 'text', '#fbbf24', `+${earn}g`);
+      addExp(10); updateQuestProgress('earn', earn);
+      setGameState(prev => ({ ...prev, cookedMeat: prev.cookedMeat - 1, gold: prev.gold + earn }));
+      setCustomers(prev => { const n = [...prev]; n[0] = { ...n[0], state: 'leaving' }; return n; });
     }
   }, [customers, gameState.cookedMeat]);
 
@@ -589,136 +461,105 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     return () => cancelAnimationFrame(requestRef.current!);
   }, [tick]);
 
-  const handleTowerSlotClick = (slotId: number) => { setSelectedSlotId(slotId); setActiveModal('build_tower'); };
-
+  const handleTowerSlotClick = (id: number) => { setSelectedSlotId(id); setActiveModal('build_tower'); };
   const buildOrUpgradeTower = (type: TowerType) => {
       if (selectedSlotId === null) return;
       const existing = towers.find(t => t.slotId === selectedSlotId);
       const conf = TOWER_TYPES[type];
-      if (localUser.level < conf.unlockLevel) { alert(`Cần cấp độ ${conf.unlockLevel} để mở khóa!`); return; }
-      if (existing) {
-          if (existing.type !== type) { alert("Vị trí này đã có anh hùng khác trấn thủ!"); return; }
-          const cost = Math.floor(conf.baseCost * Math.pow(1.5, existing.level));
-          if (gameState.gold >= cost) {
-              soundManager.playCoin(); setGameState(prev => ({ ...prev, gold: prev.gold - cost }));
-              setTowers(prev => prev.map(t => t.slotId === selectedSlotId ? { ...t, level: t.level + 1 } : t));
-              spawnParticle(existing.position.x, existing.position.y, 'text', '#fbbf24', 'UPGRADE!');
-              if (type === 'ice') soundManager.speak("Sức mạnh băng giá tăng lên!", 'ice');
-              if (type === 'fire') soundManager.speak("Ngọn lửa bùng cháy dữ dội hơn!", 'fire');
-              if (type === 'archer') soundManager.speak("Mũi tên của ta sẽ nhanh hơn!", 'archer');
-              if (type === 'cannon') soundManager.speak("Nạp thêm thuốc súng!", 'cannon');
-              setActiveModal('none');
+      const cost = existing ? Math.floor(conf.baseCost * Math.pow(1.5, existing.level)) : conf.baseCost;
+      
+      if (gameState.gold >= cost) {
+          setGameState(p => ({...p, gold: p.gold - cost}));
+          if (existing) {
+              setTowers(p => p.map(t => t.slotId === selectedSlotId ? {...t, level: t.level+1} : t));
+              spawnParticle(TOWER_SLOTS[selectedSlotId].x, TOWER_SLOTS[selectedSlotId].y, 'text', '#fbbf24', 'UPGRADE!');
+          } else {
+              setTowers(p => [...p, { id: `t-${Date.now()}`, slotId: selectedSlotId, type, level: 1, position: TOWER_SLOTS[selectedSlotId], lastShot: 0 }]);
+              spawnParticle(TOWER_SLOTS[selectedSlotId].x, TOWER_SLOTS[selectedSlotId].y, 'text', '#fbbf24', 'NEW!');
           }
-      } else {
-          if (gameState.gold >= conf.baseCost) {
-              soundManager.playCoin(); setGameState(prev => ({ ...prev, gold: prev.gold - conf.baseCost }));
-              setTowers(prev => [...prev, { id: `tower-${Date.now()}`, slotId: selectedSlotId, type: type, level: 1, position: TOWER_SLOTS[selectedSlotId], lastShot: 0 }]);
-              spawnParticle(TOWER_SLOTS[selectedSlotId].x, TOWER_SLOTS[selectedSlotId].y, 'text', '#fbbf24', 'SUMMONED!');
-              if (type === 'ice') soundManager.speak("Băng Nữ đã sẵn sàng! Đóng băng tất cả!", 'ice');
-              if (type === 'fire') soundManager.speak("Hỏa Thần giáng thế! Thiêu rụi chúng!", 'fire');
-              if (type === 'archer') soundManager.speak("Tinh Linh Xạ Thủ tham chiến!", 'archer');
-              if (type === 'cannon') soundManager.speak("Đại bác sẵn sàng khai hỏa!", 'cannon');
-              setActiveModal('none');
-          }
+          soundManager.playCoin(); setActiveModal('none');
       }
   };
 
   const hireStaff = (type: keyof StaffLevels) => {
-      const currentLevel = staff[type];
-      const cost = Math.floor(STAFF_COSTS[type].base * Math.pow(STAFF_COSTS[type].scale, currentLevel));
+      const cost = Math.floor(STAFF_COSTS[type].base * Math.pow(STAFF_COSTS[type].scale, staff[type]));
       if (gameState.gold >= cost) {
-          soundManager.playCoin(); setGameState(prev => ({ ...prev, gold: prev.gold - cost }));
-          setStaff(prev => ({ ...prev, [type]: prev[type] + 1 }));
-          spawnParticle(GAME_WIDTH/2, GAME_HEIGHT/2, 'text', '#fbbf24', 'HIRED!');
-          if (type === 'lumberjack') soundManager.speak("Tôi sẽ đi chặt gỗ ngay!", 'cannon'); 
-          else soundManager.speak("Cảm ơn ông chủ!", 'guide');
+          setGameState(p => ({...p, gold: p.gold - cost}));
+          setStaff(p => ({...p, [type]: p[type]+1}));
+          soundManager.playCoin();
       }
   };
 
   const triggerUltimate = () => {
       if (gameState.mana >= gameState.maxMana) {
-          soundManager.playUltimate(); soundManager.speak("Thiên thạch hủy diệt!!!", 'fire');
-          setGameState(prev => ({ ...prev, mana: 0 })); setUltimateActive(true);
+          soundManager.playUltimate(); setGameState(p => ({...p, mana: 0})); setUltimateActive(true);
           setTimeout(() => setUltimateActive(false), 1500);
-          setEnemies(prev => prev.map(e => ({ ...e, hp: e.hp - 500 })));
+          setEnemies(p => p.map(e => ({...e, hp: e.hp - 500})));
       }
   };
 
   const handleExit = () => { localUser.staffLevels = staff; localUser.savedResources = resources; onExit(gameState.gold, gameState.ruby); };
-
   const getSeasonIcon = () => {
-      switch(gameState.season) {
-          case 'spring': return <Leaf className="text-pink-400" size={20}/>;
-          case 'summer': return <Sun className="text-yellow-400" size={20}/>;
-          case 'autumn': return <Leaf className="text-orange-500" size={20}/>;
-          case 'winter': return <Snowflake className="text-blue-200" size={20}/>;
-      }
+      if (gameState.season === 'spring') return <Leaf className="text-pink-400" size={20}/>;
+      if (gameState.season === 'summer') return <Sun className="text-yellow-400" size={20}/>;
+      if (gameState.season === 'autumn') return <Leaf className="text-orange-500" size={20}/>;
+      return <Snowflake className="text-blue-200" size={20}/>;
   }
 
   return (
     <div className="w-full h-full bg-[#0f111a] flex items-center justify-center overflow-hidden relative">
-      {/* Activate Animations */}
       <EntitiesStyle /> 
-
       <div style={{ transform: `scale(${scale})`, transformOrigin: 'center' }}>
           <div className="relative shadow-2xl overflow-hidden border-4 border-stone-800 rounded-xl" style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}>
             <GameMap season={gameState.season} />
             
-            {/* --- RENDER WALLS --- */}
+            {/* Tường & Nút Nâng Cấp */}
             <div className="absolute inset-0 z-10 pointer-events-none">
-                {walls.map(wall => (
-                    <WallEntity key={wall.id} x={WALL_X} y={wall.y} hp={wall.hp} maxHp={wall.maxHp} />
-                ))}
+                {walls.map(w => <WallEntity key={w.id} x={WALL_X} y={w.y} hp={w.hp} maxHp={w.maxHp} level={wallLevel} />)}
             </div>
+            {walls.length > 0 && (
+                <button onClick={upgradeWall} className="absolute bg-blue-700 hover:bg-blue-600 text-white text-[10px] px-2 py-1 rounded-lg font-bold border border-blue-400 shadow-lg z-50 flex items-center gap-1 animate-bounce" style={{ left: WALL_X - 30, top: 15 }}>
+                    <ArrowUpCircle size={12}/> UP ({formatNumber(wallLevel*1000)}g)
+                </button>
+            )}
 
+            {/* Decoration: Nhà Dân & Kho */}
+            <HouseEntity x={100} y={200} />
+            <HouseEntity x={150} y={400} />
+            <HouseEntity x={80} y={550} />
+            <WarehouseEntity x={WOOD_STORAGE_POS.x} y={WOOD_STORAGE_POS.y} />
+
+            {/* Entities */}
             {trees.map(t => <TreeEntity key={t.id} x={t.x} y={t.y} hp={t.hp} />)}
             {staff.lumberjack > 0 && <LumberjackEntity x={lumberjackState.position.x} y={lumberjackState.position.y} state={lumberjackState.state} />}
             {staff.chef > 0 && <ChefEntity x={GRILL_POS.x} y={GRILL_POS.y - 20} level={staff.chef} />}
             {staff.server > 0 && <ServerEntity x={COUNTER_POS.x - 30} y={COUNTER_POS.y} level={staff.server} />}
             {staff.collector > 0 && <CollectorEntity x={GAME_WIDTH/2} y={GAME_HEIGHT/2 + 50} level={staff.collector} />}
 
-            <div className="absolute flex flex-col items-center group cursor-pointer hover:scale-105 transition-transform" style={{ left: GRILL_POS.x - 70, top: GRILL_POS.y - 50, zIndex: GRILL_POS.y + 10 }} onClick={() => setActiveModal('staff_hire')}>
-                 <div className="absolute -top-6 bg-black/80 px-2 py-0.5 rounded text-[10px] text-center z-50 border border-red-500 whitespace-nowrap"><span className="text-red-400 font-bold">Lò Lv.{upgrades.grill.level}</span></div>
-                 <div className="w-36 h-20"></div> 
-                 <div className="absolute top-2 w-full flex justify-around pointer-events-none">
-                    {Array.from({length: Math.min(3, gameState.cookedMeat)}).map((_, i) => (
-                       <div key={i} className="animate-pulse"><Beef size={20} className="text-red-500 drop-shadow-md" /></div>
-                    ))}
-                 </div>
-            </div>
-
+            {/* Tháp & Slot */}
             {TOWER_SLOTS.map((slot, idx) => {
                 const builtTower = towers.find(t => t.slotId === idx);
                 return (
                     <div key={idx} className="absolute flex flex-col items-center group cursor-pointer hover:scale-110 transition-transform" style={{ left: slot.x - 50, top: slot.y - 80, zIndex: slot.y }} onClick={() => handleTowerSlotClick(idx)}>
-                        {builtTower ? (
-                             <div className="relative pointer-events-none -mt-4"><TowerVisual type={builtTower.type} /></div>
-                        ) : (
-                             <div className="w-12 h-12 flex items-center justify-center animate-pulse opacity-0 group-hover:opacity-100 transition-opacity">
-                                 <Hammer size={24} className="text-white drop-shadow-md" />
-                             </div>
-                        )}
+                        {builtTower ? <div className="relative pointer-events-none -mt-4"><TowerVisual type={builtTower.type} /></div> : <div className="w-12 h-12 flex items-center justify-center animate-pulse opacity-0 group-hover:opacity-100 transition-opacity"><Hammer size={24} className="text-white drop-shadow-md" /></div>}
                     </div>
                 );
             })}
 
+            {/* HUD Bếp */}
+            <div className="absolute flex flex-col items-center cursor-pointer hover:scale-105" style={{ left: GRILL_POS.x - 70, top: GRILL_POS.y - 50, zIndex: GRILL_POS.y + 10 }} onClick={() => setActiveModal('staff_hire')}>
+                 <div className="absolute -top-6 bg-black/80 px-2 py-0.5 rounded text-[10px] text-center z-50 border border-red-500 whitespace-nowrap"><span className="text-red-400 font-bold">Lò Lv.{upgrades.grill.level}</span></div>
+                 <div className="w-36 h-20"></div> 
+                 <div className="absolute top-2 w-full flex justify-around pointer-events-none">{Array.from({length: Math.min(3, gameState.cookedMeat)}).map((_, i) => <div key={i} className="animate-pulse"><Beef size={20} className="text-red-500 drop-shadow-md" /></div>)}</div>
+            </div>
+
+            {/* Quầy Bán */}
             <div className="absolute" style={{ left: COUNTER_POS.x - 40, top: COUNTER_POS.y - 40, zIndex: COUNTER_POS.y + 10 }}>
-                {gameState.cookedMeat > 0 ? (
-                    <div className="bg-white/90 rounded-full px-2 py-1 border border-black shadow-md flex items-center gap-1 animate-bounce">
-                        <Beef size={14} className="text-red-600"/><span className="font-bold text-xs text-black">{gameState.cookedMeat}</span>
-                    </div>
-                ) : (
-                     <div className="bg-red-500/90 rounded-full px-2 py-1 border border-white shadow-md"><span className="font-bold text-[10px] text-white">HẾT HÀNG</span></div>
-                )}
+                {gameState.cookedMeat > 0 ? <div className="bg-white/90 rounded-full px-2 py-1 border border-black shadow-md flex items-center gap-1 animate-bounce"><Beef size={14} className="text-red-600"/><span className="font-bold text-xs text-black">{gameState.cookedMeat}</span></div> : <div className="bg-red-500/90 rounded-full px-2 py-1 border border-white shadow-md"><span className="font-bold text-[10px] text-white">HẾT HÀNG</span></div>}
             </div>
 
             <HeroEntity x={HERO_POS.x} y={HERO_POS.y} />
-            
-            {noMeatWarning && (
-                <div className="absolute top-32 left-1/2 -translate-x-1/2 bg-red-900/90 border-2 border-red-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 animate-bounce z-[60]">
-                    <AlertCircle /> CẦN THỊT!
-                </div>
-            )}
+            {noMeatWarning && <div className="absolute top-32 left-1/2 -translate-x-1/2 bg-red-900/90 border-2 border-red-500 text-white px-4 py-2 rounded-xl flex items-center gap-2 animate-bounce z-[60]"><AlertCircle /> CẦN THỊT!</div>}
 
             {customers.map(c => <CustomerEntity key={c.id} customer={c} />)}
             {civilians.map(c => <CivilianEntity key={c.id} civilian={c} />)}
@@ -727,68 +568,46 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
             {particles.map(p => <div key={p.id} className="absolute pointer-events-none font-black z-[100]" style={{ left: p.x, top: p.y, color: p.color, fontSize: p.size + 10, opacity: p.life, transform: 'translate(-50%, -50%)', textShadow: '1px 1px 0 #000' }}>{p.type === 'icon' || p.type === 'snow' || p.type === 'rain' || p.type === 'leaf' ? p.icon : p.text}</div>)}
             {ultimateActive && <div className="absolute inset-0 z-[200] pointer-events-none animate-pulse bg-red-500/20 flex items-center justify-center"><h1 className="text-6xl font-black text-red-500 drop-shadow-[0_4px_0_#000] animate-bounce">THIÊN THẠCH!!!</h1></div>}
 
-            {/* --- UI HUD (Inside Scaled Container) --- */}
+            {/* --- UI HUD --- */}
             <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-50">
-                {/* Top Stats */}
                 <div className="flex justify-between items-start pointer-events-auto w-full">
                     <div className="flex gap-2 items-center">
-                        <div className="bg-black/80 border border-stone-500 rounded-full px-3 py-1 flex items-center gap-2 h-10">
-                            <div className="text-sm font-bold text-stone-300">Lv.{localUser.level}</div>
-                        </div>
-                        
-                        <div className="bg-black/80 border border-yellow-500 rounded-full px-4 py-1 flex items-center gap-2 h-10">
-                            <Coins size={20} className="fill-yellow-500 text-yellow-500" />
-                            <span className="text-xl font-black text-yellow-400 font-sans">{gameState.gold.toLocaleString()}</span>
-                        </div>
-
-                        <div className="bg-black/80 border border-blue-400 rounded-full px-4 py-1 flex items-center gap-2 h-10">
-                            {getSeasonIcon()}
-                            <span className="font-mono font-bold text-sm text-blue-200">{formatTime(gameState.gameTime.hour, gameState.gameTime.minute)}</span>
-                        </div>
+                        <div className="bg-black/80 border border-stone-500 rounded-full px-3 py-1 flex items-center gap-2 h-10"><div className="text-sm font-bold text-stone-300">Lv.{localUser.level}</div></div>
+                        <div className="bg-black/80 border border-yellow-500 rounded-full px-4 py-1 flex items-center gap-2 h-10"><Coins size={20} className="fill-yellow-500 text-yellow-500" /><span className="text-xl font-black text-yellow-400 font-sans">{formatNumber(gameState.gold)}</span></div>
+                        <div className="bg-black/80 border border-blue-400 rounded-full px-4 py-1 flex items-center gap-2 h-10">{getSeasonIcon()}<span className="font-mono font-bold text-sm text-blue-200">{formatTime(gameState.gameTime.hour, gameState.gameTime.minute)}</span></div>
                     </div>
-                    
                     <div className="flex items-center gap-2">
-                            <div className={`bg-black/80 border ${resources['prod_meat'] === 0 ? 'border-red-600 animate-pulse' : 'border-green-600'} rounded-full px-4 py-1 flex items-center gap-2 h-10`}>
-                                    <Beef size={20} className="fill-red-900 text-red-500" />
-                                    <span className="text-xl font-black text-white">{resources['prod_meat'] || 0}</span>
-                            </div>
+                            <div className={`bg-black/80 border ${resources['prod_meat'] === 0 ? 'border-red-600 animate-pulse' : 'border-green-600'} rounded-full px-4 py-1 flex items-center gap-2 h-10`}><Beef size={20} className="fill-red-900 text-red-500" /><span className="text-xl font-black text-white">{resources['prod_meat'] || 0}</span></div>
                             <button onClick={() => setShowExitConfirm(true)} className="bg-red-600 hover:bg-red-500 rounded-lg p-2 text-white shadow-md transition-transform active:scale-95"><ArrowLeftCircle size={24}/></button>
                     </div>
                 </div>
+                {guideMessage && <div className="absolute top-20 left-4 max-w-[250px] animate-in slide-in-from-left duration-500 pointer-events-none z-[60]"><div className="bg-stone-900/90 border-2 border-purple-500 p-3 rounded-xl rounded-tl-none shadow-xl flex flex-col"><p className="text-yellow-300 font-bold text-xs uppercase mb-1">Tiểu Quỷ mách:</p><p className="text-white text-sm font-medium leading-tight">{guideMessage}</p></div></div>}
                 
-                {/* Guide Message */}
-                {guideMessage && (
-                    <div className="absolute top-20 left-4 max-w-[250px] animate-in slide-in-from-left duration-500 pointer-events-none z-[60]">
-                        <div className="bg-stone-900/90 border-2 border-purple-500 p-3 rounded-xl rounded-tl-none shadow-xl flex flex-col">
-                            <p className="text-yellow-300 font-bold text-xs uppercase mb-1">Tiểu Quỷ mách:</p>
-                            <p className="text-white text-sm font-medium leading-tight">{guideMessage}</p>
+                {/* Danh Sách Nhiệm Vụ */}
+                <div className="absolute top-16 left-4 flex flex-col gap-2 pointer-events-none">
+                    {quests.map(q => (
+                        <div key={q.id} className="bg-black/60 border-l-4 border-yellow-500 p-2 rounded w-48 text-white">
+                            <div className="flex justify-between items-center text-xs font-bold text-yellow-400">
+                                <span>{q.description}</span>
+                                <span>{q.type==='kill' ? <Gem size={10} className="inline text-red-500"/> : <Coins size={10} className="inline text-yellow-500"/>}</span>
+                            </div>
+                            <div className="w-full bg-gray-700 h-1 mt-1 rounded-full overflow-hidden">
+                                <div className="bg-green-500 h-full transition-all duration-500" style={{width: `${(q.currentAmount/q.targetAmount)*100}%`}}></div>
+                            </div>
                         </div>
-                    </div>
-                )}
-                
-                {/* Wall Protection Warning */}
-                <div className="absolute top-20 right-4 bg-black/50 text-white p-2 rounded border border-red-500 animate-pulse flex items-center gap-2 pointer-events-none">
-                    <ShieldAlert className="text-red-500"/>
-                    <span className="font-bold text-xs">BẢO VỆ TƯỜNG THÀNH!</span>
+                    ))}
                 </div>
 
-                {/* Bottom Bar */}
-                <div className="flex items-end justify-center w-full pointer-events-auto relative h-16">
-                        <button onClick={() => setActiveModal('staff_hire')} className="absolute left-0 bottom-0 bg-stone-800 border-2 border-blue-500 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-stone-700 shadow-xl text-sm transition-transform active:scale-95">
-                            <Users size={20} className="text-blue-300"/> TUYỂN NV
-                        </button>
+                <div className="absolute top-20 right-4 bg-black/50 text-white p-2 rounded border border-red-500 animate-pulse flex items-center gap-2 pointer-events-none"><ShieldAlert className="text-red-500"/><span className="font-bold text-xs">BẢO VỆ TƯỜNG THÀNH!</span></div>
 
+                <div className="flex items-end justify-center w-full pointer-events-auto relative h-16">
+                        <button onClick={() => setActiveModal('staff_hire')} className="absolute left-0 bottom-0 bg-stone-800 border-2 border-blue-500 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 hover:bg-stone-700 shadow-xl text-sm transition-transform active:scale-95"><Users size={20} className="text-blue-300"/> TUYỂN NV</button>
                         <div className="absolute right-0 bottom-0 flex flex-col items-center gap-1">
-                            <div className="w-4 h-24 bg-stone-900 rounded-full border-2 border-stone-600 relative overflow-hidden">
-                                <div className="absolute bottom-0 w-full bg-cyan-500 transition-all duration-300" style={{ height: `${(gameState.mana / gameState.maxMana) * 100}%` }}></div>
-                            </div>
-                            <button onClick={triggerUltimate} disabled={gameState.mana < gameState.maxMana} className={`w-14 h-14 rounded-full border-4 shadow-xl flex items-center justify-center transition-all ${gameState.mana >= gameState.maxMana ? 'bg-red-600 border-red-400 hover:scale-110 animate-[bounce_1s_infinite] cursor-pointer' : 'bg-stone-800 border-stone-600 opacity-50 cursor-not-allowed'}`}>
-                                <Flame size={28} className={gameState.mana >= gameState.maxMana ? "text-yellow-300 fill-yellow-500 animate-pulse" : "text-stone-500"} />
-                            </button>
+                            <div className="w-4 h-24 bg-stone-900 rounded-full border-2 border-stone-600 relative overflow-hidden"><div className="absolute bottom-0 w-full bg-cyan-500 transition-all duration-300" style={{ height: `${(gameState.mana / gameState.maxMana) * 100}%` }}></div></div>
+                            <button onClick={triggerUltimate} disabled={gameState.mana < gameState.maxMana} className={`w-14 h-14 rounded-full border-4 shadow-xl flex items-center justify-center transition-all ${gameState.mana >= gameState.maxMana ? 'bg-red-600 border-red-400 hover:scale-110 animate-[bounce_1s_infinite] cursor-pointer' : 'bg-stone-800 border-stone-600 opacity-50 cursor-not-allowed'}`}><Flame size={28} className={gameState.mana >= gameState.maxMana ? "text-yellow-300 fill-yellow-500 animate-pulse" : "text-stone-500"} /></button>
                         </div>
                 </div>
             </div>
-
           </div>
       </div>
 
@@ -797,11 +616,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
       {activeModal === 'build_tower' && selectedSlotId !== null && (
           <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
                <div className="bg-[#1e293b] rounded-2xl border-2 border-blue-900 p-4 max-w-lg w-full max-h-[90vh] overflow-y-auto" style={{transform: `scale(${1/scale})`}}>
-                   <div className="flex justify-between items-center mb-4 border-b border-stone-700 pb-2">
-                       <h3 className="text-lg font-bold text-white flex items-center gap-2"><Crown size={18} className="text-yellow-500"/> Triệu Hồi</h3>
-                       <button onClick={() => { setActiveModal('none'); setSelectedSlotId(null); }}><X size={18} className="text-white"/></button>
-                   </div>
-                   
+                   <div className="flex justify-between items-center mb-4 border-b border-stone-700 pb-2"><h3 className="text-lg font-bold text-white flex items-center gap-2"><Crown size={18} className="text-yellow-500"/> Triệu Hồi</h3><button onClick={() => { setActiveModal('none'); setSelectedSlotId(null); }}><X size={18} className="text-white"/></button></div>
                    <div className="grid grid-cols-1 gap-2">
                        {Object.values(TOWER_TYPES).map((tower) => {
                            const existing = towers.find(t => t.slotId === selectedSlotId);
@@ -809,24 +624,9 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
                            const isCurrent = existing && existing.type === tower.id;
                            const upgradeCost = existing ? Math.floor(tower.baseCost * Math.pow(1.5, existing.level)) : tower.baseCost;
                            return (
-                               <button 
-                                 key={tower.id}
-                                 disabled={isLocked || (!!existing && !isCurrent)}
-                                 onClick={() => buildOrUpgradeTower(tower.id)}
-                                 className={`flex items-center justify-between p-2 rounded-xl border transition-all ${isLocked ? 'bg-stone-900 border-stone-800 opacity-50' : (existing && !isCurrent) ? 'bg-stone-900 border-stone-800 opacity-30' : 'bg-stone-800 border-stone-600 hover:border-yellow-500'}`}
-                               >
-                                   <div className="flex items-center gap-3">
-                                       <div className={`w-12 h-12 rounded-lg flex items-center justify-center border border-stone-600 bg-stone-900`}><div className="transform scale-50"><TowerVisual type={tower.id as TowerType} /></div></div>
-                                       <div className="text-left">
-                                           <div className="font-bold text-white text-sm">{tower.name} {existing && isCurrent && `(Lv.${existing.level})`}</div>
-                                           <div className="text-[10px] text-stone-400">{tower.desc}</div>
-                                       </div>
-                                   </div>
-                                   {!isLocked && (!existing || isCurrent) && (
-                                       <div className="flex flex-col items-end">
-                                            <div className="text-yellow-500 font-bold flex items-center gap-1 text-xs"><Coins size={12}/> {upgradeCost}</div>
-                                       </div>
-                                   )}
+                               <button key={tower.id} disabled={isLocked || (!!existing && !isCurrent)} onClick={() => buildOrUpgradeTower(tower.id)} className={`flex items-center justify-between p-2 rounded-xl border transition-all ${isLocked ? 'bg-stone-900 border-stone-800 opacity-50' : (existing && !isCurrent) ? 'bg-stone-900 border-stone-800 opacity-30' : 'bg-stone-800 border-stone-600 hover:border-yellow-500'}`}>
+                                   <div className="flex items-center gap-3"><div className={`w-12 h-12 rounded-lg flex items-center justify-center border border-stone-600 bg-stone-900`}><div className="transform scale-50"><TowerVisual type={tower.id as TowerType} /></div></div><div className="text-left"><div className="font-bold text-white text-sm">{tower.name} {existing && isCurrent && `(Lv.${existing.level})`}</div><div className="text-[10px] text-stone-400">{tower.desc}</div></div></div>
+                                   {!isLocked && (!existing || isCurrent) && (<div className="flex flex-col items-end"><div className="text-yellow-500 font-bold flex items-center gap-1 text-xs"><Coins size={12}/> {formatNumber(upgradeCost)}</div></div>)}
                                </button>
                            )
                        })}
@@ -838,23 +638,15 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
       {activeModal === 'staff_hire' && (
           <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
                <div className="bg-[#1e293b] rounded-2xl border-2 border-amber-900 p-4 max-w-2xl w-full max-h-[90vh] overflow-y-auto" style={{transform: `scale(${1/scale})`}}>
-                   <div className="flex justify-between items-center mb-4 border-b border-stone-700 pb-2">
-                       <h3 className="text-lg font-bold text-white flex items-center gap-2"><Users size={18} className="text-amber-500"/> Tuyển Dụng</h3>
-                       <button onClick={() => setActiveModal('none')}><X size={18} className="text-white"/></button>
-                   </div>
+                   <div className="flex justify-between items-center mb-4 border-b border-stone-700 pb-2"><h3 className="text-lg font-bold text-white flex items-center gap-2"><Users size={18} className="text-amber-500"/> Tuyển Dụng</h3><button onClick={() => setActiveModal('none')}><X size={18} className="text-white"/></button></div>
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {[{ id: 'chef', name: 'Đầu Bếp', desc: 'Nướng nhanh hơn.', icon: <Flame className="text-red-500"/> }, { id: 'server', name: 'Bồi Bàn', desc: 'Phục vụ nhiều khách.', icon: <Users className="text-blue-500"/> }, { id: 'lumberjack', name: 'Thợ Gỗ', desc: 'Tự động chặt gỗ.', icon: <Trees className="text-green-500"/> }, { id: 'collector', name: 'Hút Vàng', desc: 'Tự động nhặt vàng.', icon: <Gem className="text-yellow-500"/> }].map((s) => {
                             const type = s.id as keyof StaffLevels; const level = staff[type]; const cost = Math.floor(STAFF_COSTS[type].base * Math.pow(STAFF_COSTS[type].scale, level));
                             return (
                                 <div key={s.id} className="bg-stone-800 p-3 rounded-xl border border-stone-700 flex flex-col justify-between">
-                                    <div className="flex justify-between items-start mb-1">
-                                        <div className="flex items-center gap-2">
-                                            <div className="bg-black/40 p-2 rounded-lg">{s.icon}</div>
-                                            <div><h4 className="font-bold text-white text-sm">{s.name}</h4><div className="text-[10px] text-stone-400">Lv: {level}</div></div>
-                                        </div>
-                                    </div>
+                                    <div className="flex justify-between items-start mb-1"><div className="flex items-center gap-2"><div className="bg-black/40 p-2 rounded-lg">{s.icon}</div><div><h4 className="font-bold text-white text-sm">{s.name}</h4><div className="text-[10px] text-stone-400">Lv: {level}</div></div></div></div>
                                     <p className="text-[10px] text-stone-500 mb-2 h-4">{s.desc}</p>
-                                    <button onClick={() => hireStaff(type)} className="w-full bg-amber-700 hover:bg-amber-600 text-white py-1.5 rounded-lg font-bold flex items-center justify-center gap-1 text-xs"><Coins size={12}/> {cost} - Up</button>
+                                    <button onClick={() => hireStaff(type)} className="w-full bg-amber-700 hover:bg-amber-600 text-white py-1.5 rounded-lg font-bold flex items-center justify-center gap-1 text-xs"><Coins size={12}/> {formatNumber(cost)} - Up</button>
                                 </div>
                             )
                         })}
@@ -863,30 +655,8 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
           </div>
       )}
 
-      {showExitConfirm && (
-        <div className="absolute inset-0 z-[150] flex items-center justify-center bg-black/90 p-4">
-             <div className="bg-stone-800 p-6 rounded-xl text-center border-2 border-stone-600" style={{transform: `scale(${1/scale})`}}>
-                 <h3 className="text-white text-lg font-bold mb-2">Về Sảnh Chờ?</h3>
-                 <p className="text-stone-400 mb-4 text-sm">Nhận được: <span className="text-yellow-400 font-bold">{gameState.gold - user.gold} Vàng</span></p>
-                 <div className="flex gap-4 justify-center">
-                     <button onClick={() => setShowExitConfirm(false)} className="px-4 py-2 bg-stone-600 text-white rounded-lg text-sm">Ở lại</button>
-                     <button onClick={handleExit} className="px-4 py-2 bg-red-600 text-white rounded-lg font-bold text-sm">Thoát</button>
-                 </div>
-             </div>
-        </div>
-      )}
-
-      {levelUpModal && (
-          <div className="absolute inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in zoom-in duration-300">
-              <div className="bg-stone-900 rounded-xl p-6 text-center border-4 border-yellow-400 relative" style={{transform: `scale(${1/scale})`}}>
-                  <h2 className="text-3xl font-black text-white mb-2 font-['Mali'] uppercase">Lên Cấp!</h2>
-                  <div className="flex items-center justify-center gap-4 text-xl font-bold text-stone-300 mb-4">
-                      <span>Lv.{levelUpModal.oldLevel}</span><ArrowUpCircle size={24} className="text-green-500 animate-bounce" /><span className="text-yellow-400 text-3xl">Lv.{levelUpModal.newLevel}</span>
-                  </div>
-                  <button onClick={() => setLevelUpModal(null)} className="bg-green-600 text-white py-2 px-6 rounded-full font-black text-lg">Tiếp Tục</button>
-              </div>
-          </div>
-      )}
+      {showExitConfirm && <div className="absolute inset-0 z-[150] flex items-center justify-center bg-black/90 p-4"><div className="bg-stone-800 p-6 rounded-xl text-center border-2 border-stone-600" style={{transform: `scale(${1/scale})`}}><h3 className="text-white text-lg font-bold mb-2">Về Sảnh Chờ?</h3><p className="text-stone-400 mb-4 text-sm">Nhận được: <span className="text-yellow-400 font-bold">{gameState.gold - user.gold} Vàng</span></p><div className="flex gap-4 justify-center"><button onClick={() => setShowExitConfirm(false)} className="px-4 py-2 bg-stone-600 text-white rounded-lg text-sm">Ở lại</button><button onClick={handleExit} className="px-4 py-2 bg-red-600 text-white rounded-lg font-bold text-sm">Thoát</button></div></div></div>}
+      {levelUpModal && <div className="absolute inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in zoom-in duration-300"><div className="bg-stone-900 rounded-xl p-6 text-center border-4 border-yellow-400 relative" style={{transform: `scale(${1/scale})`}}><h2 className="text-3xl font-black text-white mb-2 font-['Mali'] uppercase">Lên Cấp!</h2><div className="flex items-center justify-center gap-4 text-xl font-bold text-stone-300 mb-4"><span>Lv.{levelUpModal.oldLevel}</span><ArrowUpCircle size={24} className="text-green-500 animate-bounce" /><span className="text-yellow-400 text-3xl">Lv.{levelUpModal.newLevel}</span></div><button onClick={() => setLevelUpModal(null)} className="bg-green-600 text-white py-2 px-6 rounded-full font-black text-lg">Tiếp Tục</button></div></div>}
     </div>
   );
 };

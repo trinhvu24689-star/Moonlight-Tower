@@ -11,35 +11,33 @@ export const SPAWN_POINT = { x: 900, y: 150 };
 export const EXIT_POINT = { x: 900, y: 550 };
 export const ENEMY_SPAWN = { x: -100, y: 500 };
 
-// NEW AREAS
-export const FOREST_AREA = { x: 100, y: 80 }; 
-export const WOOD_STORAGE_POS = { x: 200, y: 150 };
+// Khu vực an toàn (Làng)
+export const VILLAGE_AREA = { x: 100, y: 300 };
+
+// Khu vực rừng (Bên phải tường)
+export const FOREST_AREA = { x: 400, y: 50, w: 400, h: 550 }; 
+export const WOOD_STORAGE_POS = { x: 150, y: 150 };
 export const LUMBERJACK_HUT = { x: 50, y: 50 };
 
-// --- CẤU HÌNH TƯỜNG THÀNH (MỚI) ---
-export const WALL_X = 300; // Tường chặn ở toạ độ 300
-export const WALL_HP = 500; // Máu mỗi khúc tường
-export const WALL_SEGMENTS_COUNT = 6; // Chia tường làm 6 khúc
+// Tường thành
+export const WALL_X = 350; // Dời tường ra xa chút cho rộng làng
+export const WALL_BASE_HP = 1000; // Máu trâu hơn
+export const WALL_SEGMENTS_COUNT = 6;
 
-// Khu vực quái xuất hiện ngẫu nhiên (Rừng bên phải)
-export const SPAWN_ZONE = {
-    minX: 750, maxX: 850, // Xuất hiện tít bên phải
-    minY: 50, maxY: 550   // Rải rác từ trên xuống dưới
-};
+// Khu vực quái sinh ra (Tít bên phải)
+export const SPAWN_ZONE = { minX: 850, maxX: 950, minY: 50, maxY: 550 };
 
-// Vị trí xây tháp (Xếp dọc sau tường để thủ)
+// Vị trí tháp (Sau tường)
 const generateTowerSlots = () => {
     const slots = [];
-    // Hàng thủ 1 (Sát tường)
-    for(let i=0; i<6; i++) slots.push({ id: slots.length, x: 250, y: 80 + (i*90) });
-    // Hàng thủ 2 (Xa hơn tí)
-    for(let i=0; i<6; i++) slots.push({ id: slots.length, x: 180, y: 120 + (i*90) });
+    for(let i=0; i<6; i++) slots.push({ id: slots.length, x: 300, y: 80 + (i*90) }); // Hàng 1
+    for(let i=0; i<6; i++) slots.push({ id: slots.length, x: 220, y: 120 + (i*90) }); // Hàng 2
     return slots;
 };
 export const TOWER_SLOTS = generateTowerSlots();
 
-export const GRILL_POS = { x: 350, y: 450 };
-export const HERO_POS = { x: 250, y: 380 }; 
+export const GRILL_POS = { x: 450, y: 450 };
+export const HERO_POS = { x: 280, y: 350 }; 
 
 export const GARDEN_PLOTS_POS = [
   { x: 50, y: 430 }, { x: 120, y: 430 },
@@ -50,12 +48,10 @@ export const GARDEN_PLOTS_POS = [
 // Logic
 export const QUEUE_SPACING = 40; 
 export const CUSTOMER_SPEED = 2;
-
-// --- CHỈNH SỬA ĐỂ GIẢM LAG ---
-export const ENEMY_SPEED = 0.8; // Tốc độ vừa phải
-export const PROJECTILE_SPEED = 8;
+export const ENEMY_SPEED = 0.6; // Đi chậm lại chút
+export const PROJECTILE_SPEED = 12; // Đạn bay nhanh hơn
 export const GACHA_COST = 100;
-export const ENEMY_SPAWN_RATE = 8000; // QUAN TRỌNG: 8 giây mới ra 1 con (Giảm Spam)
+export const ENEMY_SPAWN_RATE = 5000; // 5 giây/con (Đỡ spam)
 export const SEASON_DURATION = 21600; 
 
 export const STAFF_COSTS = {
@@ -66,10 +62,10 @@ export const STAFF_COSTS = {
 };
 
 export const TOWER_TYPES: Record<string, TowerConfig> = {
-    ice: { id: 'ice', name: 'Băng Nữ', baseCost: 150, baseDmg: 20, baseSpeed: 1500, range: 250, unlockLevel: 1, desc: 'Làm chậm quái.' },
-    archer: { id: 'archer', name: 'Xạ Thủ', baseCost: 500, baseDmg: 35, baseSpeed: 500, range: 200, unlockLevel: 3, desc: 'Bắn siêu nhanh.' },
-    fire: { id: 'fire', name: 'Hỏa Thần', baseCost: 1500, baseDmg: 80, baseSpeed: 2000, range: 300, unlockLevel: 5, desc: 'Sát thương lan.' },
-    cannon: { id: 'cannon', name: 'Pháo Thủ', baseCost: 3000, baseDmg: 200, baseSpeed: 3000, range: 400, unlockLevel: 8, desc: 'Gây choáng.' }
+    ice: { id: 'ice', name: 'Băng Nữ', baseCost: 150, baseDmg: 25, baseSpeed: 1500, range: 250, unlockLevel: 1, desc: 'Làm chậm quái.' },
+    archer: { id: 'archer', name: 'Xạ Thủ', baseCost: 500, baseDmg: 40, baseSpeed: 400, range: 200, unlockLevel: 3, desc: 'Bắn siêu nhanh.' },
+    fire: { id: 'fire', name: 'Hỏa Thần', baseCost: 1500, baseDmg: 100, baseSpeed: 2000, range: 300, unlockLevel: 5, desc: 'Sát thương lan.' },
+    cannon: { id: 'cannon', name: 'Pháo Thủ', baseCost: 3000, baseDmg: 250, baseSpeed: 3000, range: 400, unlockLevel: 8, desc: 'Gây choáng.' }
 };
 
 export const CROPS: Record<string, CropData> = {
