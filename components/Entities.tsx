@@ -2,22 +2,15 @@ import React, { useEffect } from 'react';
 import { Customer, Enemy, Projectile, TowerType, Civilian } from '../types';
 import { Axe, ChefHat, User, Magnet } from 'lucide-react';
 
-// --- HÀM LẤY ẢNH ---
 const getSpriteUrl = (id: number) => `/Class_Monster_${id}.png`;
 
-// --- FIX ID ẢNH (Dùng số chuẩn 1-191) ---
+// --- FIX ID ẢNH (Vk kiểm tra folder public xem có mấy số này ko nha) ---
 const SPRITE_IDS = {
-  // Hero: Chọn mấy con đẹp trai
   HERO_ICE: 100, HERO_ARCHER: 107, HERO_FIRE: 105, HERO_CANNON: 112,
-  
-  // Quái
-  ENEMY_PUMPKIN: 119, ENEMY_SKELETON: 125, ENEMY_BAT: 131, ENEMY_BOSS: 60, // Boss Cây/Golem
-  
-  // Dân & NPC
+  ENEMY_PUMPKIN: 119, ENEMY_SKELETON: 125, ENEMY_BAT: 131, ENEMY_BOSS: 150, // Đổi Boss sang 150 xem có hiện ko
   CIVILIAN: 1, WOLF_MAN: 135, MEAT_MAN: 136, 
-  
-  // Item
-  GOLD: 51, MEAT: 137, HOUSE: 180 // Dùng tạm ảnh lều/nhà nếu có
+  HOUSE: 180, // Cái nhà kho dùng ảnh 180
+  TREE: 60    // Cây dùng ảnh 60
 };
 
 const speak = (text: string, pitch = 1, rate = 1) => {
@@ -57,10 +50,10 @@ const SpriteImage: React.FC<{ id: number; className?: string }> = ({ id, classNa
 
 // --- ENTITIES ---
 
-// Nhà dân làng (Tĩnh)
+// Nhà dân (Dùng ảnh tĩnh cho nhẹ)
 export const HouseEntity: React.FC<{ x: number, y: number }> = ({ x, y }) => (
-    <BaseEntity x={x} y={y} className="-ml-10 -mt-[80px]" scale={1.5}>
-        <SpriteImage id={SPRITE_IDS.HOUSE} className="w-20 h-20" />
+    <BaseEntity x={x} y={y} className="-ml-10 -mt-[80px]" scale={1.2}> {/* Thu nhỏ nhà dân */}
+        <SpriteImage id={SPRITE_IDS.HOUSE} className="w-16 h-16" />
     </BaseEntity>
 );
 
@@ -89,7 +82,6 @@ export const CivilianEntity: React.FC<{ civilian: Civilian }> = ({ civilian }) =
     </BaseEntity>
 );
 
-// Quái vật (Thêm logic lật mặt nếu đi sang trái)
 export const EnemyEntity: React.FC<{ enemy: Enemy }> = ({ enemy }) => {
   const hpPercent = (enemy.hp / enemy.maxHp) * 100;
   let spriteId = SPRITE_IDS.ENEMY_PUMPKIN;
@@ -98,14 +90,10 @@ export const EnemyEntity: React.FC<{ enemy: Enemy }> = ({ enemy }) => {
 
   if (enemy.type === 'skeleton') spriteId = SPRITE_IDS.ENEMY_SKELETON;
   else if (enemy.type === 'bat') { spriteId = SPRITE_IDS.ENEMY_BAT; anim = 'fly'; }
-  else if (enemy.type === 'boss') { spriteId = SPRITE_IDS.ENEMY_BOSS; scale = 2.5; }
-
-  // Quái đi từ phải sang trái -> KHÔNG CẦN FLIP (Nếu ảnh gốc quay phải).
-  // Nếu ảnh gốc quay trái thì flip. Thường ảnh game quay phải.
-  const isMovingLeft = true; 
+  else if (enemy.type === 'boss') { spriteId = SPRITE_IDS.ENEMY_BOSS; scale = 2.0; } // Boss to vừa phải thôi
 
   return (
-    <BaseEntity x={enemy.position.x} y={enemy.position.y} className={`-ml-8 ${enemy.type === 'boss' ? '-mt-[120px]' : '-mt-[80px]'}`} scale={scale} animType={anim} flip={isMovingLeft}>
+    <BaseEntity x={enemy.position.x} y={enemy.position.y} className={`-ml-8 ${enemy.type === 'boss' ? '-mt-[120px]' : '-mt-[80px]'}`} scale={scale} animType={anim} flip={true}> {/* Flip=true để quái quay mặt sang trái */}
       <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-10 h-1.5 bg-gray-900 rounded border border-black overflow-hidden z-50">
         <div className={`h-full transition-all duration-200 ${enemy.isBoss ? 'bg-purple-600' : 'bg-red-500'}`} style={{ width: `${hpPercent}%` }}></div>
       </div>
@@ -168,11 +156,10 @@ export const CollectorEntity: React.FC<{ x: number, y: number, level: number }> 
 
 export const TreeEntity: React.FC<{ x: number, y: number, hp: number }> = ({ x, y, hp }) => (
     <BaseEntity x={x} y={y} className="-ml-12 -mt-[120px]" animType="shake">
-        <div className={`flex flex-col items-center ${hp < 50 ? 'opacity-50' : ''}`}><SpriteImage id={60} className="w-24 h-24" /></div>
+        <div className={`flex flex-col items-center ${hp < 50 ? 'opacity-50' : ''}`}><SpriteImage id={SPRITE_IDS.TREE} className="w-24 h-24" /></div>
     </BaseEntity>
 );
 
-// --- TƯỜNG CAO HƠN & KHO TO HƠN ---
 export const WallEntity: React.FC<{ x: number, y: number, hp: number, maxHp: number, level: number }> = ({ x, y, hp, maxHp, level }) => {
     const damageLevel = hp / maxHp; 
     let filter = ""; if (damageLevel < 0.7) filter = "sepia(0.5)"; if (damageLevel < 0.4) filter = "sepia(1) hue-rotate(-30deg)";
@@ -180,13 +167,10 @@ export const WallEntity: React.FC<{ x: number, y: number, hp: number, maxHp: num
 
     return (
         <BaseEntity x={x} y={y} className="-ml-8 -mt-[90px]" scale={1.5}>
-            {/* Thanh máu */}
             <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-16 h-2 bg-black rounded border border-white/50 z-50">
                  <div className="h-full bg-blue-500 transition-all" style={{ width: `${damageLevel * 100}%` }}></div>
             </div>
             <div className="absolute -top-14 left-1/2 -translate-x-1/2 text-[10px] font-bold text-white bg-black/50 px-1 rounded">Lv.{level}</div>
-
-            {/* Xếp 3 cục đá chồng lên nhau cho cao */}
             <div className="relative flex flex-col items-center">
                  <img src="/Class_Item_12.png" className="w-16 h-12 object-cover rounded-sm border border-black/30" style={{ filter }} />
                  <img src="/Class_Item_12.png" className="w-16 h-12 object-cover -mt-8 rounded-sm border border-black/30" style={{ filter }} />
@@ -196,10 +180,10 @@ export const WallEntity: React.FC<{ x: number, y: number, hp: number, maxHp: num
     );
 };
 
-// Kho gỗ to gấp đôi
+// --- FIX KHO NHỎ LẠI ---
 export const WarehouseEntity: React.FC<{ x: number, y: number }> = ({ x, y }) => (
-    <BaseEntity x={x} y={y} className="-ml-16 -mt-[120px]" scale={2.5}> 
-        <SpriteImage id={SPRITE_IDS.HOUSE} className="w-24 h-24" /> {/* Dùng ảnh nhà/item 180 làm kho */}
+    <BaseEntity x={x} y={y} className="-ml-16 -mt-[120px]" scale={1.2}> {/* Giảm scale từ 2.5 xuống 1.2 */}
+        <SpriteImage id={SPRITE_IDS.HOUSE} className="w-24 h-24" />
     </BaseEntity>
 );
 

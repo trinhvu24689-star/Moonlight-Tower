@@ -3,7 +3,7 @@ import {
     Coins, Beef, ArrowUpCircle, X, LogOut, Gem, 
     Zap, Flame, Star, Ghost, MessageCircle, Shield, Hammer,
     AlertCircle, Users, Axe, Trees, Crown, CloudRain, Sun, Snowflake, Leaf, Calendar, Clock,
-    ShieldAlert, ArrowLeftCircle // Chồng thêm 2 icon này để dùng cho nút Thoát và Cảnh báo
+    ShieldAlert, ArrowLeftCircle 
 } from 'lucide-react';
 import { GameMap } from './GameMap';
 import { 
@@ -20,7 +20,7 @@ import {
 } from '../types';
 import { 
   GAME_WIDTH, GAME_HEIGHT, 
-  COUNTER_POS, SPAWN_POINT, EXIT_POINT, 
+  COUNTER_POS, CUSTOMER_SPAWN, EXIT_POINT, // <-- Dùng CUSTOMER_SPAWN mới
   INITIAL_UPGRADES, CUSTOMER_SPEED, ENEMY_SPAWN, ENEMY_SPEED,
   TOWER_SLOTS, PROJECTILE_SPEED, GRILL_POS, HERO_POS,
   TOWER_TYPES, ENEMY_SPAWN_RATE, CROPS,
@@ -30,7 +30,6 @@ import {
 } from '../constants';
 import { soundManager } from '../utils/audio';
 
-// --- HÀM RÚT GỌN SỐ (10tr, 1 tỷ...) ---
 const formatNumber = (num: number) => {
     if (num >= 1000000000) return (num / 1000000000).toFixed(1).replace('.0','') + ' tỷ';
     if (num >= 1000000) return (num / 1000000).toFixed(1).replace('.0','') + ' tr';
@@ -39,97 +38,52 @@ const formatNumber = (num: number) => {
 };
 
 interface WallSegment { id: number; y: number; hp: number; maxHp: number; }
+interface GameSessionProps { user: UserProfile; difficulty: GameDifficulty; onExit: (earnedGold: number, earnedRuby: number) => void; }
 
-interface GameSessionProps {
-    user: UserProfile;
-    difficulty: GameDifficulty;
-    onExit: (earnedGold: number, earnedRuby: number) => void;
-}
-
-// --- TÍNH THỜI GIAN GAME ---
 const calculateGameTime = (): { season: Season, timeLeft: number, clock: GameClock } => {
     const now = new Date();
     const msToday = now.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const seasonBlockMs = 6 * 60 * 60 * 1000; 
     const seasonIdx = Math.floor(msToday / seasonBlockMs); 
     const seasons: Season[] = ['spring', 'summer', 'autumn', 'winter'];
-    const season = seasons[seasonIdx];
-    const msInCurrentSeason = msToday % seasonBlockMs;
-    const timeLeft = Math.floor((seasonBlockMs - msInCurrentSeason) / 1000);
-    
-    // Giả lập đồng hồ game
-    const dayProgress = msToday / 86400000;
-    const gameHour = Math.floor(dayProgress * 24);
-    const gameMinute = Math.floor((dayProgress * 1440) % 60);
-
-    return { season, timeLeft, clock: { day: 1, month: 1, year: 1, hour: gameHour, minute: gameMinute } };
+    return { season: seasons[seasonIdx], timeLeft: 0, clock: { day: 1, month: 1, year: 1, hour: 12, minute: 0 } };
 };
 
-const formatTime = (h: number, m: number) => `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-
-// --- COMPONENT CHÍNH ---
 export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onExit }) => {
   const isHardcore = difficulty === 'hardcore';
   const ENEMY_HP_MULTIPLIER = isHardcore ? 1.5 : 1.0;
   
-  // State cơ bản
   const [localUser, setLocalUser] = useState<UserProfile>(user);
   const [resources, setResources] = useState<Resources>(user.savedResources || { 'prod_meat': 0, 'wood': 0 });
   const [staff, setStaff] = useState<StaffLevels>(user.staffLevels || { chef: 0, server: 0, lumberjack: 0, collector: 0 });
-
-  const initialTimeData = calculateGameTime();
-
   const [gameState, setGameState] = useState<GameState>({
-    gold: user.gold, 
-    ruby: user.ruby,
-    cookedMeat: 5, 
-    meatCapacity: 20 + (staff.chef * 10),
-    towerDamageBuff: 0,
-    grillSpeedBuff: 0,
-    lastTick: Date.now(),
-    mana: 0,
-    maxMana: 100,
-    season: initialTimeData.season,
-    seasonTimer: initialTimeData.timeLeft,
-    gameTime: initialTimeData.clock
+    gold: user.gold, ruby: user.ruby, cookedMeat: 5, meatCapacity: 20 + (staff.chef * 10),
+    towerDamageBuff: 0, grillSpeedBuff: 0, lastTick: Date.now(), mana: 0, maxMana: 100,
+    season: 'spring', seasonTimer: 0, gameTime: { day:1, month:1, year:1, hour:12, minute:0 }
   });
 
-  // --- TƯỜNG THÀNH (QUẢN LÝ MÁU & CẤP ĐỘ) ---
   const [wallLevel, setWallLevel] = useState(1);
   const [walls, setWalls] = useState<WallSegment[]>(() => {
       const segments = [];
       const segmentHeight = GAME_HEIGHT / WALL_SEGMENTS_COUNT;
-      for (let i = 0; i < WALL_SEGMENTS_COUNT; i++) {
-          segments.push({
-              id: i, y: i * segmentHeight + 60, hp: WALL_BASE_HP, maxHp: WALL_BASE_HP
-          });
-      }
+      for (let i = 0; i < WALL_SEGMENTS_COUNT; i++) segments.push({ id: i, y: i * segmentHeight + 60, hp: WALL_BASE_HP, maxHp: WALL_BASE_HP });
       return segments;
   });
 
-  // --- RỪNG CÂY (TẠO 20-30 CÂY NGẪU NHIÊN) ---
   const [trees, setTrees] = useState(Array.from({length: 25}).map((_, i) => ({ 
-      id: i, 
-      x: FOREST_AREA.x + (Math.random() * FOREST_AREA.w), 
-      y: FOREST_AREA.y + (Math.random() * FOREST_AREA.h), 
-      hp: 100 
+      id: i, x: FOREST_AREA.x + (Math.random() * FOREST_AREA.w), y: FOREST_AREA.y + (Math.random() * FOREST_AREA.h), hp: 100 
   })));
 
   const [quests, setQuests] = useState<Quest[]>([]);
   const [upgrades, setUpgrades] = useState<UpgradeConfig>(INITIAL_UPGRADES);
   const [towers, setTowers] = useState<BuiltTower[]>([]);
   const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
-
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [civilians, setCivilians] = useState<Civilian[]>([]);
   const [enemies, setEnemies] = useState<Enemy[]>([]);
   const [projectiles, setProjectiles] = useState<Projectile[]>([]);
   const [particles, setParticles] = useState<Particle[]>([]); 
-  
-  const [lumberjackState, setLumberjackState] = useState<LumberjackState>({ 
-      state: 'idle', position: LUMBERJACK_HUT, targetTreeIndex: null 
-  });
-
+  const [lumberjackState, setLumberjackState] = useState<LumberjackState>({ state: 'idle', position: LUMBERJACK_HUT, targetTreeIndex: null });
   const [activeModal, setActiveModal] = useState<'none' | 'build_tower' | 'staff_hire'>('none');
   const [scale, setScale] = useState(1);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
@@ -149,31 +103,18 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
   const lastTimeCheck = useRef(0);
   const requestRef = useRef<number>(0);
 
-  // --- HỆ THỐNG NHIỆM VỤ VÔ HẠN ---
   const generateNewQuest = () => {
       const id = Date.now().toString();
       const scale = Math.max(1, localUser.level);
-      const isKill = Math.random() > 0.5; // 50% diệt quái, 50% kiếm tiền
-      
-      const target = isKill 
-        ? 10 + Math.floor(Math.random() * 20) // Diệt 10-30 con
-        : 500 + Math.floor(Math.random() * 1000 * scale); // Kiếm tiền
-      
-      const rewardGold = isKill ? target * 25 * scale : Math.floor(target * 0.4);
-      const rewardRuby = Math.floor(Math.random() * 3) + 1;
-
+      const isKill = Math.random() > 0.5;
+      const target = isKill ? 10 + Math.floor(Math.random() * 20) : 500 + Math.floor(Math.random() * 1000);
       const newQuest: Quest = {
           id, type: isKill ? 'kill' : 'earn',
           targetAmount: target, currentAmount: 0, isCompleted: false,
           description: isKill ? `Diệt ${target} quái` : `Kiếm ${formatNumber(target)} vàng`,
-          rewardGold, rewardRuby
+          rewardGold: isKill ? target * 25 : Math.floor(target * 0.5), rewardRuby: Math.floor(Math.random() * 3) + 1
       };
-      
-      // Giữ tối đa 3 nhiệm vụ, nếu full thì xóa cái cũ đã xong
-      setQuests(prev => {
-          const active = prev.filter(q => !q.isCompleted);
-          return [...active, newQuest].slice(0, 3);
-      });
+      setQuests(prev => [...prev.filter(q => !q.isCompleted), newQuest].slice(0, 3));
   };
 
   const updateQuestProgress = (type: Quest['type'], amount: number) => {
@@ -182,41 +123,26 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
           const newAmount = q.currentAmount + amount;
           if (newAmount >= q.targetAmount) {
               soundManager.playCoin();
-              spawnParticle(GAME_WIDTH/2, 100, 'text', '#fbbf24', `Xong NV! +${formatNumber(q.rewardGold)}g`, <Crown size={20}/>);
-              
-              // Cộng thưởng ngay
               setGameState(gs => ({...gs, gold: gs.gold + q.rewardGold, ruby: gs.ruby + q.rewardRuby}));
-              
-              // Tạo nhiệm vụ mới sau 2s
-              setTimeout(() => generateNewQuest(), 2000);
-              
+              spawnParticle(GAME_WIDTH/2, 100, 'text', '#fbbf24', `Xong NV! +${formatNumber(q.rewardGold)}g`, <Crown size={20}/>);
+              setTimeout(generateNewQuest, 2000);
               return { ...q, currentAmount: q.targetAmount, isCompleted: true };
           }
           return { ...q, currentAmount: newAmount };
       }));
   };
 
-  // Nâng cấp Tường
   const upgradeWall = () => {
       const cost = wallLevel * 1000;
       if (gameState.gold >= cost) {
           setGameState(prev => ({ ...prev, gold: prev.gold - cost }));
           setWallLevel(l => l + 1);
-          // Hồi đầy máu và tăng giới hạn máu
-          setWalls(prev => prev.map(w => ({ 
-              ...w, 
-              maxHp: w.maxHp + 500, 
-              hp: w.maxHp + 500 
-          })));
+          setWalls(prev => prev.map(w => ({ ...w, hp: w.maxHp + 500, maxHp: w.maxHp + 500 })));
           spawnParticle(WALL_X, 300, 'text', '#fbbf24', 'Tường UP!', <Shield size={20}/>);
           soundManager.playCoin();
-      } else {
-          // Hiệu ứng rung báo thiếu tiền (đơn giản là alert hoặc particle đỏ)
-          spawnParticle(WALL_X, 300, 'text', '#ef4444', 'Thiếu tiền!');
-      }
+      } else spawnParticle(WALL_X, 300, 'text', '#ef4444', 'Thiếu tiền!');
   };
 
-  // Helper
   const getDistance = (p1: Vector2, p2: Vector2) => Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
   const moveTowards = (current: Vector2, target: Vector2, speed: number): Vector2 => {
     const dist = getDistance(current, target);
@@ -244,12 +170,10 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // --- GAME LOOP ---
   const tick = useCallback(() => {
     if (showTutorial || activeModal !== 'none' || levelUpModal || showExitConfirm) return;
     const now = Date.now();
     
-    // Thời gian & Mùa
     if (now - lastTimeCheck.current > 100) {
         setGameState(prev => {
             const timeData = calculateGameTime();
@@ -266,28 +190,26 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         lastTimeCheck.current = now;
     }
 
-    // Spawn Khách & Dân
+    // --- SPAWN KHÁCH TỪ TRÁI ---
     const MAX_CUSTOMERS = 10 + (staff.server * 2);
     if (now - lastCustomerSpawn.current > Math.max(1000, 3000 - (localUser.level * 100)) && customers.length < MAX_CUSTOMERS) {
-      setCustomers(prev => [...prev, { id: `cust-${now}`, position: { ...SPAWN_POINT }, speed: CUSTOMER_SPEED + (staff.server * 0.1), state: 'walking_in', patience: 100, requestAmount: 1, skin: Math.random()>0.5?'barbarian':'wolf', type: 'warrior' }]);
+      setCustomers(prev => [...prev, { id: `cust-${now}`, position: { ...CUSTOMER_SPAWN }, speed: CUSTOMER_SPEED + (staff.server * 0.1), state: 'walking_in', patience: 100, requestAmount: 1, skin: Math.random()>0.5?'barbarian':'wolf', type: 'warrior' }]);
       lastCustomerSpawn.current = now;
     }
     if (resources['wood'] > 0 && now - lastCivilianSpawn.current > 5000 && civilians.length < 5) {
-        setCivilians(prev => [...prev, { id: `civ-${now}`, position: { ...SPAWN_POINT }, speed: CUSTOMER_SPEED * 0.8, state: 'walking_in', type: 'civilian' }]);
+        setCivilians(prev => [...prev, { id: `civ-${now}`, position: { ...CUSTOMER_SPAWN }, speed: CUSTOMER_SPEED * 0.8, state: 'walking_in', type: 'civilian' }]);
         lastCivilianSpawn.current = now;
     }
 
-    // --- LOGIC QUÁI & LOOT ---
+    // --- SPAWN QUÁI TỪ PHẢI (MÁU YẾU HƠN) ---
     const currentSpawnRate = Math.max(500, ENEMY_SPAWN_RATE - (localUser.level * 300));
     if (now - lastEnemySpawn.current > currentSpawnRate && enemies.length < 50) {
        let type: EnemyType = 'pumpkin';
        let speed = ENEMY_SPEED;
-       const isBoss = Math.random() < 0.05; // 5% ra boss
+       const isBoss = Math.random() < 0.05; 
        
-       // Tăng máu theo thời gian chơi (Mỗi phút +10%)
-       const timePlayedMinutes = (now - gameState.lastTick) / 60000; 
-       const hpMulti = 1 + (localUser.level * 0.2); 
-       const baseHp = (isBoss ? 3000 : 150) * hpMulti;
+       const hpMulti = 1 + (localUser.level * 0.1); // Giảm độ khó tăng máu
+       const baseHp = (isBoss ? 1000 : 80) * hpMulti; // Máu gốc giảm
 
        const randomY = Math.random() * (SPAWN_ZONE.maxY - SPAWN_ZONE.minY) + SPAWN_ZONE.minY;
        const randomX = Math.random() * (SPAWN_ZONE.maxX - SPAWN_ZONE.minX) + SPAWN_ZONE.minX;
@@ -302,7 +224,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
        lastEnemySpawn.current = now;
     }
 
-    // AI Quái: Đi tìm tường đập
     setEnemies(prev => prev.map(enemy => {
         let { x, y } = enemy.position;
         let isAttacking = false;
@@ -310,24 +231,17 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
 
         if (targetWall && x > WALL_X) {
             const dist = x - WALL_X;
-            if (dist > 40) { 
-                x -= enemy.speed; 
-                y += Math.sin(now / 300) * 0.5; // Đi lảo đảo
-            } else {
-                isAttacking = true; 
-                targetWall.hp -= 0.5; // Đập tường
-            }
+            if (dist > 40) { x -= enemy.speed; y += Math.sin(now / 300) * 0.5; } 
+            else { isAttacking = true; targetWall.hp -= 0.5; }
         } else {
-            x -= enemy.speed; // Tràn vào làng
+            x -= enemy.speed; 
             if (y < 300) y += 0.2; else y -= 0.2;
         }
         return { ...enemy, position: {x, y}, state: isAttacking ? 'attacking' : 'walking' };
     }).filter(e => e.hp > 0 && e.position.x > -50));
 
-    // Cập nhật tường (Xóa khúc tường vỡ)
     setWalls(prev => prev.filter(w => w.hp > 0));
 
-    // --- XỬ LÝ ĐẠN & LOOT ---
     setProjectiles(prev => {
       const active: Projectile[] = [];
       const hits: string[] = []; 
@@ -338,7 +252,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         if (dist < 10) hits.push(p.targetId);
         else active.push({ ...p, position: moveTowards(p.position, target.position, p.speed) });
       });
-      
       if (hits.length > 0) {
         soundManager.playHit();
         setEnemies(old => old.map(e => {
@@ -346,32 +259,19 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
              const hitter = prev.find(p => p.targetId === e.id);
              const dmg = hitter ? hitter.damage : 0;
              spawnParticle(e.position.x, e.position.y, 'text', '#f87171', `-${Math.floor(dmg)}`);
-             
              let newHp = e.hp - dmg;
              if (newHp <= 0) {
-                 // --- LOGIC LOOT ĐỒ ---
                  updateQuestProgress('kill', 1);
                  addExp(e.isBoss ? 100 : 5);
-                 
-                 // Boss rớt Vàng + KC
                  if (e.isBoss) {
                      const goldDrop = 500 + (localUser.level * 100);
-                     const rubyDrop = 5;
-                     setGameState(gs => ({...gs, gold: gs.gold + goldDrop, ruby: gs.ruby + rubyDrop}));
+                     setGameState(gs => ({...gs, gold: gs.gold + goldDrop, ruby: gs.ruby + 5}));
                      spawnParticle(e.position.x, e.position.y, 'text', '#fbbf24', `+${formatNumber(goldDrop)}g`, <Crown size={16}/>);
-                 } 
-                 // Quái thường rớt Thịt (30%)
-                 else if (Math.random() < 0.3) {
+                 } else if (Math.random() < 0.3) {
                      setResources(r => ({ ...r, 'prod_meat': (r['prod_meat'] || 0) + 1 })); 
                      spawnParticle(e.position.x, e.position.y, 'text', '#ef4444', '+1 Thịt', <Beef size={12}/>);
                  }
-                 
-                 // Nhân viên nhặt tiền
-                 if (staff.collector > 0) { 
-                     let goldDrop = 10 + localUser.level; 
-                     setGameState(gs => ({...gs, gold: gs.gold + goldDrop})); 
-                     spawnParticle(e.position.x, e.position.y - 10, 'text', '#fbbf24', `+${goldDrop}g`); 
-                 }
+                 if (staff.collector > 0) { let goldDrop = 10 + localUser.level; setGameState(gs => ({...gs, gold: gs.gold + goldDrop})); spawnParticle(e.position.x, e.position.y - 10, 'text', '#fbbf24', `+${goldDrop}g`); }
                  setGameState(gs => ({ ...gs, mana: Math.min(gs.mana + (e.isBoss?50:10), gs.maxMana) }));
              }
              return { ...e, hp: newHp };
@@ -385,7 +285,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     setParticles(prev => prev.map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.1, life: p.life - 0.02 })).filter(p => p.life > 0));
     setGameState(prev => ({ ...prev, lastTick: now }));
     
-    // Logic nấu nướng & khách hàng (Giữ nguyên)
     const chefBoost = staff.chef * 500;
     const grillSpeed = Math.max(200, upgrades.grill.speed - chefBoost - (gameState.grillSpeedBuff * 10));
     if (now - lastCookTime.current > grillSpeed && gameState.cookedMeat < gameState.meatCapacity) {
@@ -399,7 +298,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         lastCookTime.current = now;
     }
     
-    // Logic Bắn của Tháp (Giữ nguyên)
     setTowers(prev => prev.map(t => {
         const conf = TOWER_TYPES[t.type];
         if (enemies.length > 0 && now - t.lastShot > Math.max(200, conf.baseSpeed - (t.level * 50))) {
@@ -414,7 +312,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         return t;
     }));
 
-    // Logic Dân mua gỗ & Thợ gỗ (Rút gọn cho đỡ dài)
     setCivilians(prev => prev.map(c => {
         let {x, y} = c.position;
         if (c.state === 'walking_in' && getDistance(c.position, WOOD_STORAGE_POS) < 5) {
@@ -430,9 +327,8 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         return {...c, position: moveTowards(c.position, EXIT_POINT, c.speed)};
     }).filter(c => getDistance(c.position, EXIT_POINT) > 10));
 
-    // Khách mua thịt
     setCustomers(prev => prev.map((c, i) => {
-        let target = i===0 ? COUNTER_POS : {x: COUNTER_POS.x+60+(i*20), y: COUNTER_POS.y-(i*30)+100};
+        let target = i===0 ? COUNTER_POS : {x: COUNTER_POS.x-60-(i*20), y: COUNTER_POS.y-(i*30)+100}; // Xếp hàng bên trái
         if (c.state === 'walking_in' || c.state === 'waiting') {
             if (getDistance(c.position, target) < 5) return {...c, state: i===0 ? 'buying' : 'waiting'};
             return {...c, position: moveTowards(c.position, target, c.speed)};
@@ -467,7 +363,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
       const existing = towers.find(t => t.slotId === selectedSlotId);
       const conf = TOWER_TYPES[type];
       const cost = existing ? Math.floor(conf.baseCost * Math.pow(1.5, existing.level)) : conf.baseCost;
-      
       if (gameState.gold >= cost) {
           setGameState(p => ({...p, gold: p.gold - cost}));
           if (existing) {
@@ -513,7 +408,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
           <div className="relative shadow-2xl overflow-hidden border-4 border-stone-800 rounded-xl" style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}>
             <GameMap season={gameState.season} />
             
-            {/* Tường & Nút Nâng Cấp */}
             <div className="absolute inset-0 z-10 pointer-events-none">
                 {walls.map(w => <WallEntity key={w.id} x={WALL_X} y={w.y} hp={w.hp} maxHp={w.maxHp} level={wallLevel} />)}
             </div>
@@ -523,20 +417,17 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
                 </button>
             )}
 
-            {/* Decoration: Nhà Dân & Kho */}
             <HouseEntity x={100} y={200} />
             <HouseEntity x={150} y={400} />
             <HouseEntity x={80} y={550} />
             <WarehouseEntity x={WOOD_STORAGE_POS.x} y={WOOD_STORAGE_POS.y} />
 
-            {/* Entities */}
             {trees.map(t => <TreeEntity key={t.id} x={t.x} y={t.y} hp={t.hp} />)}
             {staff.lumberjack > 0 && <LumberjackEntity x={lumberjackState.position.x} y={lumberjackState.position.y} state={lumberjackState.state} />}
             {staff.chef > 0 && <ChefEntity x={GRILL_POS.x} y={GRILL_POS.y - 20} level={staff.chef} />}
             {staff.server > 0 && <ServerEntity x={COUNTER_POS.x - 30} y={COUNTER_POS.y} level={staff.server} />}
             {staff.collector > 0 && <CollectorEntity x={GAME_WIDTH/2} y={GAME_HEIGHT/2 + 50} level={staff.collector} />}
 
-            {/* Tháp & Slot */}
             {TOWER_SLOTS.map((slot, idx) => {
                 const builtTower = towers.find(t => t.slotId === idx);
                 return (
@@ -546,14 +437,12 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
                 );
             })}
 
-            {/* HUD Bếp */}
             <div className="absolute flex flex-col items-center cursor-pointer hover:scale-105" style={{ left: GRILL_POS.x - 70, top: GRILL_POS.y - 50, zIndex: GRILL_POS.y + 10 }} onClick={() => setActiveModal('staff_hire')}>
                  <div className="absolute -top-6 bg-black/80 px-2 py-0.5 rounded text-[10px] text-center z-50 border border-red-500 whitespace-nowrap"><span className="text-red-400 font-bold">Lò Lv.{upgrades.grill.level}</span></div>
                  <div className="w-36 h-20"></div> 
                  <div className="absolute top-2 w-full flex justify-around pointer-events-none">{Array.from({length: Math.min(3, gameState.cookedMeat)}).map((_, i) => <div key={i} className="animate-pulse"><Beef size={20} className="text-red-500 drop-shadow-md" /></div>)}</div>
             </div>
 
-            {/* Quầy Bán */}
             <div className="absolute" style={{ left: COUNTER_POS.x - 40, top: COUNTER_POS.y - 40, zIndex: COUNTER_POS.y + 10 }}>
                 {gameState.cookedMeat > 0 ? <div className="bg-white/90 rounded-full px-2 py-1 border border-black shadow-md flex items-center gap-1 animate-bounce"><Beef size={14} className="text-red-600"/><span className="font-bold text-xs text-black">{gameState.cookedMeat}</span></div> : <div className="bg-red-500/90 rounded-full px-2 py-1 border border-white shadow-md"><span className="font-bold text-[10px] text-white">HẾT HÀNG</span></div>}
             </div>
@@ -568,7 +457,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
             {particles.map(p => <div key={p.id} className="absolute pointer-events-none font-black z-[100]" style={{ left: p.x, top: p.y, color: p.color, fontSize: p.size + 10, opacity: p.life, transform: 'translate(-50%, -50%)', textShadow: '1px 1px 0 #000' }}>{p.type === 'icon' || p.type === 'snow' || p.type === 'rain' || p.type === 'leaf' ? p.icon : p.text}</div>)}
             {ultimateActive && <div className="absolute inset-0 z-[200] pointer-events-none animate-pulse bg-red-500/20 flex items-center justify-center"><h1 className="text-6xl font-black text-red-500 drop-shadow-[0_4px_0_#000] animate-bounce">THIÊN THẠCH!!!</h1></div>}
 
-            {/* --- UI HUD --- */}
             <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-50">
                 <div className="flex justify-between items-start pointer-events-auto w-full">
                     <div className="flex gap-2 items-center">
@@ -583,7 +471,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
                 </div>
                 {guideMessage && <div className="absolute top-20 left-4 max-w-[250px] animate-in slide-in-from-left duration-500 pointer-events-none z-[60]"><div className="bg-stone-900/90 border-2 border-purple-500 p-3 rounded-xl rounded-tl-none shadow-xl flex flex-col"><p className="text-yellow-300 font-bold text-xs uppercase mb-1">Tiểu Quỷ mách:</p><p className="text-white text-sm font-medium leading-tight">{guideMessage}</p></div></div>}
                 
-                {/* Danh Sách Nhiệm Vụ */}
                 <div className="absolute top-16 left-4 flex flex-col gap-2 pointer-events-none">
                     {quests.map(q => (
                         <div key={q.id} className="bg-black/60 border-l-4 border-yellow-500 p-2 rounded w-48 text-white">
