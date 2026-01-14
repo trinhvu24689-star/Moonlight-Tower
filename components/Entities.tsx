@@ -1,38 +1,33 @@
-
 import React from 'react';
 import { Customer, Enemy, Projectile, TowerType, EnemyType, Civilian } from '../types';
 import { Axe, ChefHat, User, Magnet } from 'lucide-react';
 
-// --- CONFIGURATION ---
-const SPRITE_SHEET_SRC = '/spritesheet.png'; 
-const SPRITE_SCALE = 512; 
+// --- HÀM LẤY ẢNH TỪ KHO (QUAN TRỌNG NHẤT) ---
+const getSpriteUrl = (id: number) => `/Class_Monster_${id}.png`;
 
-// Format: [x, y, width, height]
-const SPRITES = {
-  HERO: [30, 65, 60, 60],          
+// --- CẤU HÌNH ID ẢNH CHO TỪNG LOẠI ---
+// (Vk có thể đổi số ở đây nếu thấy hình chưa ưng ý)
+const SPRITE_IDS = {
+  // HERO (Tướng)
+  HERO_ICE: 100,    // Pháp sư băng
+  HERO_ARCHER: 107, // Cung thủ (Vk thay số 21, 22 nếu muốn)
+  HERO_FIRE: 105,   // Pháp sư lửa
+  HERO_CANNON: 112, // Pháo thủ (Hiệp sĩ giáp sắt)
+
+  // QUÁI VẬT (Dựa trên bảng Sprite Gallery của vk)
+  ENEMY_PUMPKIN: 119, // Bí ngô (Số cũ là 2 -> 117, ck đoán tầm 119)
+  ENEMY_SKELETON: 125, // Xương khô
+  ENEMY_BAT: 131,      // Dơi
+  ENEMY_BOSS: 60,      // Boss (Cây hoặc Golem to)
+
+  // DÂN THƯỜNG & NPC
+  CIVILIAN: 1,        // Dân thường
+  WOLF_MAN: 135,      // Người sói
+  MEAT_MAN: 136,      // Người thịt
   
-  // HEROES ON TOWERS (Re-using/Mapping sprites)
-  // We use characters standing instead of buildings now
-  HERO_ICE: [280, 235, 50, 60],    // Blue Wizard look
-  HERO_ARCHER: [25, 235, 50, 60],  // Archer look
-  HERO_FIRE: [140, 235, 50, 60],   // Red Wizard look
-  HERO_CANNON: [80, 235, 50, 60],  // Dwarf look
-  
-  // TOWER BASE (Pedestal)
-  TOWER_BASE: [25, 520, 60, 40],   // Stone block/platform
-
-  // ENEMIES
-  ENEMY_PUMPKIN: [25, 415, 85, 80],      
-  ENEMY_SKELETON: [130, 415, 60, 80],    
-  ENEMY_BAT: [210, 430, 60, 50],
-  ENEMY_BOSS: [280, 400, 100, 100], 
-
-  // OTHERS
-  WOLF_MAN: [365, 235, 50, 55],    
-  MEAT_MAN: [430, 235, 50, 55],  
-  CIVILIAN: [200, 235, 50, 55], // Using a different crop for civilian  
-  MEAT_PLATE: [460, 480, 40, 30],  
-  GOLD_STACK: [350, 470, 30, 40],  
+  // ITEMS
+  GOLD: 51,           // Đống vàng
+  MEAT: 137,          // Miếng thịt
 };
 
 interface EntityProps {
@@ -41,98 +36,75 @@ interface EntityProps {
   children?: React.ReactNode;
   className?: string;
   flip?: boolean;
+  scale?: number;
 }
 
-const Shadow = ({ size = 1 }: { size?: number }) => (
-  <div 
-    className="absolute bg-black/40 rounded-[50%]"
-    style={{
-        width: `${40 * size}px`,
-        height: `${12 * size}px`,
-        bottom: '5px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: -1,
-        filter: 'blur(2px)'
-    }}
-  />
-);
-
-const BaseEntity: React.FC<EntityProps> = ({ x, y, children, className, flip }) => (
+// --- KHUNG HIỂN THỊ CƠ BẢN ---
+const BaseEntity: React.FC<EntityProps> = ({ x, y, children, className, flip, scale = 1 }) => (
   <div 
     className={`absolute transition-transform duration-75 flex flex-col items-center justify-end pointer-events-none ${className}`}
     style={{ 
       left: 0, 
       top: 0,
-      transform: `translate(${x}px, ${y}px) ${flip ? 'scaleX(-1)' : ''}`,
+      transform: `translate(${x}px, ${y}px) scale(${scale}) ${flip ? 'scaleX(-1)' : ''}`,
       zIndex: Math.floor(y) 
     }}
   >
     {children}
+    {/* Bóng đổ dưới chân cho thật */}
+    <div className="absolute bottom-1 w-8 h-2 bg-black/30 rounded-full blur-[2px] -z-10" />
   </div>
 );
 
-const SpriteRenderer: React.FC<{
-  coords: number[]; 
-  scale?: number;   
-  flip?: boolean;
-  filter?: string;
-}> = ({ coords, scale = 1, flip = false, filter }) => {
-  const [bx, by, w, h] = coords;
-  
-  return (
-    <div className="relative">
-        <div 
-            style={{
-                width: `${w}px`,
-                height: `${h}px`,
-                backgroundImage: `url(${SPRITE_SHEET_SRC})`,
-                backgroundPosition: `-${bx}px -${by}px`,
-                backgroundSize: `${SPRITE_SCALE}px auto`,
-                backgroundRepeat: 'no-repeat',
-                transform: `scale(${scale})`,
-                transformOrigin: 'bottom center',
-                imageRendering: 'pixelated',
-                filter: filter
-            }}
-        />
-        <Shadow size={scale * (w / 60)} />
-    </div>
-  );
-};
+// --- COMPONENT HIỂN THỊ ẢNH ---
+const SpriteImage: React.FC<{ id: number; className?: string }> = ({ id, className }) => (
+  <img 
+    src={getSpriteUrl(id)} 
+    alt={`Sprite ${id}`} 
+    className={`object-contain drop-shadow-md rendering-pixelated ${className}`}
+    onError={(e) => {
+      // Nếu lỗi ảnh thì hiện hình mặc định (để không bị tàng hình)
+      (e.target as HTMLImageElement).src = '/Class_Monster_1.png';
+      (e.target as HTMLImageElement).style.filter = 'grayscale(100%)';
+    }}
+  />
+);
 
+// 1. TƯỚNG (HERO)
 export const HeroEntity: React.FC<{ x: number, y: number }> = ({ x, y }) => {
   return (
-    <BaseEntity x={x} y={y} className="-ml-8 -mt-[80px]">
-       <div className="animate-[bounce_2s_infinite]">
-         <SpriteRenderer coords={SPRITES.HERO} scale={1.4} />
+    <BaseEntity x={x} y={y} className="-ml-8 -mt-[80px]" scale={1.2}>
+       <div className="animate-bounce">
+         <SpriteImage id={SPRITE_IDS.HERO_ICE} className="w-16 h-16" />
        </div>
     </BaseEntity>
   );
 };
 
+// 2. KHÁCH HÀNG (CUSTOMER)
 export const CustomerEntity: React.FC<{ customer: Customer }> = ({ customer }) => {
   const isWaiting = customer.state === 'waiting';
-  const spriteCoords = customer.skin === 'wolf' ? SPRITES.WOLF_MAN : SPRITES.MEAT_MAN;
+  // Chọn skin: Nếu là sói thì lấy ảnh sói, không thì lấy ảnh người thường
+  const spriteId = customer.skin === 'wolf' ? SPRITE_IDS.WOLF_MAN : SPRITE_IDS.CIVILIAN;
 
   return (
     <BaseEntity x={customer.position.x} y={customer.position.y} className="-ml-6 -mt-[70px]">
        {isWaiting && (
-        <div className="absolute -top-10 left-1/2 -translate-x-1/2 animate-bounce z-50">
+        <div className="absolute -top-12 left-1/2 -translate-x-1/2 animate-bounce z-50">
            <div className="bg-white border-2 border-black rounded-lg px-2 py-1 flex items-center shadow-md gap-1">
-              <div style={{ width: '20px', height: '15px', backgroundImage: `url(${SPRITE_SHEET_SRC})`, backgroundPosition: `-${SPRITES.MEAT_PLATE[0]}px -${SPRITES.MEAT_PLATE[1]}px`, backgroundSize: `${SPRITE_SCALE}px auto` }} />
-              <span className="text-xs font-black text-black">x{customer.requestAmount}</span>
+              <span className="text-xs font-black text-black">🍖 x{customer.requestAmount}</span>
            </div>
            <div className="w-0 h-0 border-l-[6px] border-l-transparent border-t-[6px] border-t-black border-r-[6px] border-r-transparent absolute -bottom-1.5 left-1/2 -translate-x-1/2"></div>
         </div>
       )}
       <div className="animate-[bounce_0.8s_infinite]">
-         <SpriteRenderer coords={spriteCoords} scale={1.3} />
+         <SpriteImage id={spriteId} className="w-14 h-14" />
       </div>
     </BaseEntity>
   );
 };
 
+// 3. DÂN THƯỜNG (CIVILIAN)
 export const CivilianEntity: React.FC<{ civilian: Civilian }> = ({ civilian }) => {
     return (
         <BaseEntity x={civilian.position.x} y={civilian.position.y} className="-ml-6 -mt-[70px]">
@@ -142,90 +114,77 @@ export const CivilianEntity: React.FC<{ civilian: Civilian }> = ({ civilian }) =
                 </div>
             )}
             <div className="animate-[bounce_1s_infinite]">
-                <SpriteRenderer coords={SPRITES.MEAT_MAN} scale={1.0} filter="grayscale(0.5) sepia(0.5)" />
+                <SpriteImage id={SPRITE_IDS.CIVILIAN} className="w-12 h-12 opacity-90" />
             </div>
         </BaseEntity>
     );
 };
 
+// 4. KẺ THÙ (ENEMY)
 export const EnemyEntity: React.FC<{ enemy: Enemy }> = ({ enemy }) => {
   const hpPercent = (enemy.hp / enemy.maxHp) * 100;
   
-  let coords = SPRITES.ENEMY_PUMPKIN;
-  let scale = 1.4;
-  let filter = '';
+  let spriteId = SPRITE_IDS.ENEMY_PUMPKIN; // Mặc định là Bí ngô
+  let scale = 1;
 
-  if (enemy.type === 'skeleton') {
-      coords = SPRITES.ENEMY_SKELETON;
-      scale = 1.2;
-  } else if (enemy.type === 'bat') {
-      coords = SPRITES.ENEMY_BAT;
-      scale = 1.0;
-  } else if (enemy.type === 'boss') {
-      coords = SPRITES.ENEMY_BOSS;
-      scale = 2.5;
-      filter = 'brightness(0.8) sepia(1) hue-rotate(-50deg) saturate(2)'; // Red demon look
+  if (enemy.type === 'skeleton') spriteId = SPRITE_IDS.ENEMY_SKELETON;
+  else if (enemy.type === 'bat') spriteId = SPRITE_IDS.ENEMY_BAT;
+  else if (enemy.type === 'boss') {
+      spriteId = SPRITE_IDS.ENEMY_BOSS;
+      scale = 2; // Boss to gấp đôi
   }
 
   return (
-    <BaseEntity x={enemy.position.x} y={enemy.position.y} className={`-ml-10 ${enemy.type === 'boss' ? '-mt-[150px]' : '-mt-[90px]'}`}>
-      <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-12 h-2 bg-gray-900 rounded border border-black overflow-hidden z-50">
+    <BaseEntity x={enemy.position.x} y={enemy.position.y} className={`-ml-8 ${enemy.type === 'boss' ? '-mt-[120px]' : '-mt-[80px]'}`} scale={scale}>
+      {/* Thanh máu */}
+      <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-10 h-1.5 bg-gray-900 rounded border border-black overflow-hidden z-50">
         <div className={`h-full transition-all duration-200 ${enemy.isBoss ? 'bg-purple-600' : 'bg-red-500'}`} style={{ width: `${hpPercent}%` }}></div>
       </div>
 
       <div className={enemy.type === 'bat' ? "animate-[bounce_0.5s_infinite]" : "animate-[bounce_1s_infinite]"}>
-        <SpriteRenderer coords={coords} scale={scale} filter={filter} />
+        <SpriteImage id={spriteId} className="w-16 h-16" />
       </div>
       
-      {enemy.isBoss && <div className="absolute -top-10 text-xs font-black text-red-500 bg-black/50 px-2 rounded">BOSS</div>}
+      {enemy.isBoss && <div className="absolute -top-8 text-[10px] font-black text-red-500 bg-black/80 px-1 rounded border border-red-500">BOSS</div>}
     </BaseEntity>
   );
 };
 
+// 5. THÁP CANH (TOWER)
 export const TowerVisual: React.FC<{ type: TowerType }> = ({ type }) => {
-    let heroCoords = SPRITES.HERO_ICE;
-    let filter = '';
+    let heroId = SPRITE_IDS.HERO_ICE;
     
-    // Select Hero Sprite
-    if (type === 'archer') heroCoords = SPRITES.HERO_ARCHER;
-    else if (type === 'fire') heroCoords = SPRITES.HERO_FIRE;
-    else if (type === 'cannon') heroCoords = SPRITES.HERO_CANNON;
+    if (type === 'archer') heroId = SPRITE_IDS.HERO_ARCHER;
+    else if (type === 'fire') heroId = SPRITE_IDS.HERO_FIRE;
+    else if (type === 'cannon') heroId = SPRITE_IDS.HERO_CANNON;
 
     return (
         <div className="relative flex flex-col items-center">
-            {/* The Pedestal/Base */}
-            <div className="absolute bottom-0">
-                <SpriteRenderer coords={SPRITES.TOWER_BASE} scale={1.0} />
+            {/* Bệ đứng (Dùng tạm ảnh cái Rương hoặc Bẫy làm bệ) */}
+            <div className="absolute bottom-0 opacity-80">
+                <img src="/Class_Item_1.png" className="w-12 h-8 object-cover grayscale brightness-50" />
             </div>
             
-            {/* The Hero Standing on top */}
-            <div className="absolute bottom-4 animate-[bounce_2s_infinite]">
-                 <SpriteRenderer coords={heroCoords} scale={1.2} filter={filter} />
+            {/* Tướng đứng trên tháp */}
+            <div className="absolute bottom-2 animate-[bounce_2s_infinite]">
+                 <SpriteImage id={heroId} className="w-14 h-14" />
             </div>
             
-            {/* Visual Effects based on Type */}
+            {/* Hiệu ứng hào quang */}
             {type === 'ice' && <div className="absolute bottom-4 w-12 h-12 bg-blue-400/20 blur-xl rounded-full animate-pulse"></div>}
             {type === 'fire' && <div className="absolute bottom-4 w-12 h-12 bg-orange-400/20 blur-xl rounded-full animate-pulse"></div>}
         </div>
     );
 }
 
+// 6. ĐẠN (PROJECTILE)
 export const ProjectileEntity: React.FC<{ projectile: Projectile }> = ({ projectile }) => (
   <BaseEntity x={projectile.position.x} y={projectile.position.y} className="w-8 h-8 -mt-4 -ml-4 z-50">
-    <svg viewBox="0 0 40 40" className="w-full h-full animate-spin">
-       <defs>
-         <radialGradient id={`projGrad-${projectile.id}`} cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
-            <stop offset="0%" stopColor="white" />
-            <stop offset="100%" stopColor={projectile.color} />
-         </radialGradient>
-       </defs>
-       <circle cx="20" cy="20" r={projectile.effect === 'splash' ? 12 : 8} fill={`url(#projGrad-${projectile.id})`} filter="blur(1px)" />
-    </svg>
+    <div className={`w-4 h-4 rounded-full shadow-lg animate-spin ${projectile.effect === 'slow' ? 'bg-blue-400 shadow-blue-500' : 'bg-orange-500 shadow-red-500'}`} />
   </BaseEntity>
 );
 
-// --- NEW ENTITIES ---
-
+// 7. NHÂN VIÊN (STAFF)
 export const LumberjackEntity: React.FC<{ x: number, y: number, state: string }> = ({ x, y, state }) => (
     <BaseEntity x={x} y={y} className="-ml-6 -mt-[60px]" flip={state === 'walking_to_tree' || state === 'chopping'}>
         <div className={`flex flex-col items-center ${state === 'chopping' ? 'animate-[pulse_0.2s_infinite]' : 'animate-bounce'}`}>
@@ -269,13 +228,17 @@ export const CollectorEntity: React.FC<{ x: number, y: number, level: number }> 
 );
 
 export const TreeEntity: React.FC<{ x: number, y: number, hp: number }> = ({ x, y, hp }) => (
-    <BaseEntity x={x} y={y} className="-ml-10 -mt-[100px]">
+    <BaseEntity x={x} y={y} className="-ml-12 -mt-[120px]">
         <div className={`flex flex-col items-center ${hp < 50 ? 'opacity-50' : ''}`}>
-             <div className="w-16 h-24 bg-green-900 rounded-t-full relative">
-                 <div className="absolute bottom-0 w-4 h-8 bg-amber-900 left-1/2 -translate-x-1/2"></div>
-             </div>
+             {/* Dùng ảnh Boss Cây (Số 60) làm cây gỗ */}
+             <SpriteImage id={60} className="w-24 h-24" />
         </div>
     </BaseEntity>
 );
 
-export { SPRITE_SHEET_SRC, SPRITE_SCALE, SPRITES, SpriteRenderer };
+// Mấy cái này giữ lại để không lỗi code cũ import
+export const SPRITE_SHEET_SRC = ''; 
+export const SPRITE_SCALE = 1; 
+export const SPRITES = {}; 
+export { SpriteRenderer }; // Xuất hàm rỗng để đỡ lỗi import
+const SpriteRenderer = () => null;
