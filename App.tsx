@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Auth } from './components/Auth';
 import { Lobby } from './components/Lobby';
@@ -11,7 +10,10 @@ import { IntroCinematic } from './components/IntroCinematic';
 import { AdminPanel } from './components/AdminPanel'; 
 import { MailBox } from './components/MailBox';       
 import { PublisherIntro } from './components/PublisherIntro';
-import { OrientationLock } from './components/OrientationLock'; // IMPORT NEW COMPONENT
+import { OrientationLock } from './components/OrientationLock'; 
+// --- MỚI: Import bộ sưu tập Sprite để test ---
+import { SpriteGallery } from './components/SpriteGallery'; 
+
 import { GameDifficulty, GardenPlot, UserProfile, Resources } from './types';
 import { ShoppingBag, Gift, Coins, Gem, Sprout, ArrowUpCircle, X, Shield, Zap, BellRing } from 'lucide-react';
 import { soundManager } from './utils/audio';
@@ -240,6 +242,9 @@ const App: React.FC = () => {
 
   return (
     <>
+      {/* --- MỚI: Bật cái này lên để test ảnh. Test xong xóa dòng này đi --- */}
+      <SpriteGallery />
+      
       <OrientationLock /> {/* Add Orientation Lock Here */}
 
       {notification && (
