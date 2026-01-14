@@ -1,14 +1,15 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
     Coins, Beef, ArrowUpCircle, X, LogOut, Gem, 
     Zap, Flame, Star, Ghost, MessageCircle, Shield, Hammer,
-    AlertCircle, Users, Axe, Trees, Crown, CloudRain, Sun, Snowflake, Leaf, Calendar, Clock
+    AlertCircle, Users, Axe, Trees, Crown, CloudRain, Sun, Snowflake, Leaf, Calendar, Clock,
+    ShieldAlert, ArrowLeftCircle // <-- New icons for Exit and Wall Warning
 } from 'lucide-react';
 import { GameMap } from './GameMap';
 import { 
     CustomerEntity, EnemyEntity, ProjectileEntity, HeroEntity, TowerVisual,
-    LumberjackEntity, ChefEntity, ServerEntity, CollectorEntity, TreeEntity, CivilianEntity
+    LumberjackEntity, ChefEntity, ServerEntity, CollectorEntity, TreeEntity, CivilianEntity,
+    WallEntity, EntitiesStyle // <-- Import WallEntity and Animation Styles
 } from './Entities';
 import { TutorialSystem } from './TutorialSystem';
 import { 
@@ -24,9 +25,13 @@ import {
   TOWER_SLOTS, PROJECTILE_SPEED, GRILL_POS, HERO_POS,
   TOWER_TYPES, ENEMY_SPAWN_RATE, CROPS,
   FOREST_AREA, WOOD_STORAGE_POS, LUMBERJACK_HUT, STAFF_COSTS,
-  SEASON_DURATION
+  SEASON_DURATION,
+  WALL_X, WALL_HP, WALL_SEGMENTS_COUNT, SPAWN_ZONE // <-- Import Wall Constants
 } from '../constants';
 import { soundManager } from '../utils/audio';
+
+// Define Wall Segment Interface
+interface WallSegment { id: number; y: number; hp: number; maxHp: number; }
 
 interface GameSessionProps {
     user: UserProfile;
@@ -34,49 +39,39 @@ interface GameSessionProps {
     onExit: (earnedGold: number, earnedRuby: number) => void;
 }
 
+// --- TIME CALCULATION (UNCHANGED) ---
 const calculateGameTime = (): { season: Season, timeLeft: number, clock: GameClock } => {
     const now = new Date();
     const msToday = now.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    
     const seasonBlockMs = 6 * 60 * 60 * 1000; 
     const seasonIdx = Math.floor(msToday / seasonBlockMs); 
     const seasons: Season[] = ['spring', 'summer', 'autumn', 'winter'];
     const season = seasons[seasonIdx];
-    
     const msInCurrentSeason = msToday % seasonBlockMs;
     const timeLeft = Math.floor((seasonBlockMs - msInCurrentSeason) / 1000);
-
     const dayProgress = msToday / 86400000;
     const totalGameDaysPassed = Math.floor(dayProgress * 360);
-    
     const gameMonth = Math.floor(totalGameDaysPassed / 30) + 1;
     const gameDay = (totalGameDaysPassed % 30) + 1;
-    
     const gameYear = 1 + Math.floor(Date.now() / 86400000);
-
     const msPerGameDay = 240000; 
     const msInCurrentGameDay = msToday % msPerGameDay;
     const gameTimeProgress = msInCurrentGameDay / msPerGameDay;
-    
     const gameHour = Math.floor(gameTimeProgress * 24);
     const gameMinute = Math.floor((gameTimeProgress * 1440) % 60);
 
-    return {
-        season,
-        timeLeft,
-        clock: { day: gameDay, month: gameMonth, year: gameYear, hour: gameHour, minute: gameMinute }
-    };
+    return { season, timeLeft, clock: { day: gameDay, month: gameMonth, year: gameYear, hour: gameHour, minute: gameMinute } };
 };
 
 const formatTime = (h: number, m: number) => `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
 
+// --- MAIN COMPONENT ---
 export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onExit }) => {
   const isHardcore = difficulty === 'hardcore';
   const ENEMY_HP_MULTIPLIER = isHardcore ? 1.5 : 1.0;
   
   // --- STATE ---
   const [localUser, setLocalUser] = useState<UserProfile>(user);
-  
   const [resources, setResources] = useState<Resources>(user.savedResources || { 'prod_meat': 0, 'wood': 0 });
   const [staff, setStaff] = useState<StaffLevels>(user.staffLevels || { chef: 0, server: 0, lumberjack: 0, collector: 0 });
 
@@ -97,9 +92,21 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     gameTime: initialTimeData.clock
   });
 
+  // --- WALL STATE (NEW) ---
+  // Create wall segments blocking the path at X = 300
+  const [walls, setWalls] = useState<WallSegment[]>(() => {
+      const segments = [];
+      const segmentHeight = GAME_HEIGHT / WALL_SEGMENTS_COUNT;
+      for (let i = 0; i < WALL_SEGMENTS_COUNT; i++) {
+          segments.push({
+              id: i, y: i * segmentHeight + 60, hp: WALL_HP, maxHp: WALL_HP
+          });
+      }
+      return segments;
+  });
+
   const [quests, setQuests] = useState<Quest[]>([]);
   const [upgrades, setUpgrades] = useState<UpgradeConfig>(INITIAL_UPGRADES);
-  
   const [towers, setTowers] = useState<BuiltTower[]>([]);
   const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
 
@@ -110,15 +117,10 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
   const [particles, setParticles] = useState<Particle[]>([]); 
   
   const [lumberjackState, setLumberjackState] = useState<LumberjackState>({ 
-      state: 'idle', 
-      position: LUMBERJACK_HUT, 
-      targetTreeIndex: null 
+      state: 'idle', position: LUMBERJACK_HUT, targetTreeIndex: null 
   });
   const [trees, setTrees] = useState(Array.from({length: 5}).map((_, i) => ({ 
-      id: i, 
-      x: FOREST_AREA.x + (Math.random() * 100), 
-      y: FOREST_AREA.y + (Math.random() * 100), 
-      hp: 100 
+      id: i, x: FOREST_AREA.x + (Math.random() * 100), y: FOREST_AREA.y + (Math.random() * 100), hp: 100 
   })));
 
   const [activeModal, setActiveModal] = useState<'none' | 'build_tower' | 'staff_hire'>('none');
@@ -126,7 +128,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [ultimateActive, setUltimateActive] = useState(false);
   const [noMeatWarning, setNoMeatWarning] = useState(false);
-  
   const [showTutorial, setShowTutorial] = useState(false);
   const [levelUpModal, setLevelUpModal] = useState<{show: boolean, oldLevel: number, newLevel: number} | null>(null);
   const [guideMessage, setGuideMessage] = useState<string | null>(null);
@@ -145,14 +146,10 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     if (!user.tutorialCompleted) setShowTutorial(true);
     generateNewQuest(); 
 
+    // Auto-build tower level 1 if needed
     if (user.level > 1 && towers.length === 0) {
         setTowers([{
-            id: 'init-tower',
-            slotId: 0,
-            type: 'ice',
-            level: 1,
-            position: TOWER_SLOTS[0],
-            lastShot: 0
+            id: 'init-tower', slotId: 0, type: 'ice', level: 1, position: TOWER_SLOTS[0], lastShot: 0
         }]);
     }
 
@@ -164,7 +161,6 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
     };
     window.addEventListener('resize', handleResize);
     handleResize();
-    
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
@@ -259,11 +255,13 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
       }
   };
 
+  // --- MAIN GAME LOOP ---
   const tick = useCallback(() => {
     if (showTutorial || activeModal !== 'none' || levelUpModal || showExitConfirm) return;
 
     const now = Date.now();
     
+    // Season Logic
     if (now - lastTimeCheck.current > 100) {
         setGameState(prev => {
             const timeData = calculateGameTime();
@@ -281,6 +279,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         lastTimeCheck.current = now;
     }
 
+    // Weather Particles
     if (Math.random() < 0.2) { 
         if (gameState.season === 'spring') spawnParticle(Math.random() * GAME_WIDTH, -10, 'leaf', '#f472b6', undefined, <Leaf size={10} className="text-pink-400 rotate-45" />);
         if (gameState.season === 'winter') spawnParticle(Math.random() * GAME_WIDTH, -10, 'snow', '#fff', undefined, <Snowflake size={10} className="text-white" />);
@@ -288,13 +287,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         if (gameState.season === 'summer' && Math.random() < 0.05) spawnParticle(Math.random() * GAME_WIDTH, Math.random() * GAME_HEIGHT, 'spark', '#fbbf24');
     }
 
-    if (localUser.level < 3 && now - lastGuideTip.current > 6000) {
-        if (enemies.length > 5) setGuideMessage("Đông quá! Xây thêm tháp đi!");
-        else if (resources['prod_meat'] === 0 && gameState.cookedMeat === 0) setGuideMessage("Hết thịt! Diệt quái hoặc trồng trọt ngay!");
-        else setGuideMessage(null);
-        lastGuideTip.current = now;
-    }
-
+    // Spawn Customers (Village Side)
     const MAX_CUSTOMERS = 10 + (staff.server * 2);
     if (now - lastCustomerSpawn.current > Math.max(1000, 3000 - (localUser.level * 100)) && customers.length < MAX_CUSTOMERS) {
       setCustomers(prev => [...prev, {
@@ -303,11 +296,14 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
       lastCustomerSpawn.current = now;
     }
 
+    // Spawn Civilians (Village Side)
     if (resources['wood'] > 0 && now - lastCivilianSpawn.current > 5000 && civilians.length < 5) {
         setCivilians(prev => [...prev, { id: `civ-${now}`, position: { ...SPAWN_POINT }, speed: CUSTOMER_SPEED * 0.8, state: 'walking_in', type: 'civilian' }]);
         lastCivilianSpawn.current = now;
     }
 
+    // --- ENEMY SPAWNING (SURVIVAL LOGIC) ---
+    // Enemies spawn randomly on the right side (Forest)
     const currentSpawnRate = Math.max(500, ENEMY_SPAWN_RATE - (localUser.level * 300));
     const MAX_ENEMIES = 50 + (localUser.level * 10);
     
@@ -315,24 +311,108 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
        let type: EnemyType = 'pumpkin';
        let speed = ENEMY_SPEED;
        let hpMulti = 1;
+       
+       // Season Modifiers
        if (gameState.season === 'spring') { if (Math.random() > 0.8) { type = 'skeleton'; speed *= 1.2; } } 
        else if (gameState.season === 'summer') { if (Math.random() > 0.5) { type = 'bat'; speed *= 2.0; hpMulti = 0.6; } else { type = 'pumpkin'; speed *= 1.5; } } 
        else if (gameState.season === 'autumn') { if (Math.random() > 0.4) { type = 'skeleton'; hpMulti = 1.3; } } 
        else if (gameState.season === 'winter') { type = 'ice_pumpkin'; hpMulti = 2.0; speed *= 0.7; }
+       
        const baseHp = (100 + (localUser.level * 20)) * hpMulti;
        
-       setEnemies(prev => [...prev, { id: `enemy-${now}`, position: { ...ENEMY_SPAWN }, speed: speed * (isHardcore ? 1.2 : 1), hp: baseHp * ENEMY_HP_MULTIPLIER, maxHp: baseHp * ENEMY_HP_MULTIPLIER, state: 'walking', type: type, isBoss: false, isFrozen: gameState.season === 'winter' }]);
+       // Random Spawn Position in SPAWN_ZONE (Forest)
+       const randomY = Math.random() * (SPAWN_ZONE.maxY - SPAWN_ZONE.minY) + SPAWN_ZONE.minY;
+       const randomX = Math.random() * (SPAWN_ZONE.maxX - SPAWN_ZONE.minX) + SPAWN_ZONE.minX;
+
+       setEnemies(prev => [...prev, { 
+           id: `enemy-${now}`, 
+           position: { x: randomX, y: randomY }, // Random position
+           path: [], currentPathIndex: 0, // No path needed
+           speed: speed * (isHardcore ? 1.2 : 1), 
+           hp: baseHp * ENEMY_HP_MULTIPLIER, 
+           maxHp: baseHp * ENEMY_HP_MULTIPLIER, 
+           state: 'walking', // Default state
+           type: type, 
+           isBoss: false, 
+           isFrozen: gameState.season === 'winter' 
+       }]);
        lastEnemySpawn.current = now;
     }
 
+    // Spawn Boss (Randomly in Forest)
     if (localUser.level >= 5 && now - lastBossSpawn.current > 60000) {
-         setEnemies(prev => [...prev, { id: `BOSS-${now}`, position: { ...ENEMY_SPAWN }, speed: ENEMY_SPEED * 0.4, hp: 3000 * (localUser.level / 2), maxHp: 3000 * (localUser.level / 2), state: 'walking', type: 'boss', isBoss: true }]);
+         const randomY = Math.random() * (SPAWN_ZONE.maxY - SPAWN_ZONE.minY) + SPAWN_ZONE.minY;
+         const randomX = Math.random() * (SPAWN_ZONE.maxX - SPAWN_ZONE.minX) + SPAWN_ZONE.minX;
+         
+         setEnemies(prev => [...prev, { 
+             id: `BOSS-${now}`, 
+             position: { x: randomX, y: randomY }, 
+             speed: ENEMY_SPEED * 0.4, 
+             hp: 3000 * (localUser.level / 2), 
+             maxHp: 3000 * (localUser.level / 2), 
+             state: 'walking', 
+             type: 'boss', 
+             isBoss: true,
+             path: [], currentPathIndex: 0
+         }]);
          spawnParticle(GAME_WIDTH/2, GAME_HEIGHT/2, 'text', '#ef4444', 'BOSS XUẤT HIỆN!');
          soundManager.playUltimate();
          soundManager.speak("Boss đã xuất hiện! Cẩn thận!", "guide");
          lastBossSpawn.current = now;
     }
 
+    // --- ENEMY AI LOGIC (WALK -> ATTACK WALL) ---
+    setEnemies(prev => prev.map(enemy => {
+        let nextX = enemy.position.x;
+        let nextY = enemy.position.y;
+        let isAttacking = false;
+
+        // Find nearest active wall
+        const targetWall = walls.find(w => w.hp > 0 && Math.abs(w.y - enemy.position.y) < 80);
+
+        // Logic: Move Left towards Wall (X=300)
+        if (targetWall && enemy.position.x > WALL_X) {
+            const distToWall = enemy.position.x - WALL_X;
+            
+            if (distToWall > 40) { 
+                // Move towards wall with sine wave wobble
+                nextX -= enemy.speed;
+                nextY += Math.sin(now / 300) * 0.5; // Wobble effect
+            } else {
+                // Reach Wall -> ATTACK
+                isAttacking = true;
+                targetWall.hp -= 0.2; // Damage wall (modify state next render cycle logic is tricky here, but effect works visually)
+                // Note: React state update inside map is bad practice, so we handle wall damage in a separate useEffect or cleaner way below.
+                // For now, we flag it.
+            }
+        } else {
+            // Wall broken or passed -> Move to Village Center (Y=300)
+            nextX -= enemy.speed;
+            if (nextY < 300) nextY += 0.2; else nextY -= 0.2;
+        }
+
+        return { 
+            ...enemy, 
+            position: { x: nextX, y: nextY },
+            state: isAttacking ? 'attacking' : 'walking'
+        };
+    }).filter(e => e.hp > 0 && e.position.x > -50));
+
+    // Damage Wall Logic (Syncing Hack)
+    setWalls(prevWalls => {
+        const attackingEnemies = enemies.filter(e => e.state === 'attacking' && e.position.x > WALL_X && e.position.x < WALL_X + 60);
+        if (attackingEnemies.length === 0) return prevWalls;
+
+        return prevWalls.map(wall => {
+            const attackers = attackingEnemies.filter(e => Math.abs(e.position.y - wall.y) < 80);
+            if (attackers.length > 0 && wall.hp > 0) {
+                return { ...wall, hp: Math.max(0, wall.hp - (attackers.length * 0.5)) };
+            }
+            return wall;
+        });
+    });
+
+    // Cooking Logic
     const chefBoost = staff.chef * 500;
     const seasonBoost = gameState.season === 'summer' ? 500 : 0;
     const grillSpeed = Math.max(200, upgrades.grill.speed - chefBoost - seasonBoost - (gameState.grillSpeedBuff * 10));
@@ -350,6 +430,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         lastCookTime.current = now;
     }
 
+    // Tower Shooting Logic
     setTowers(prevTowers => prevTowers.map(tower => {
         const conf = TOWER_TYPES[tower.type];
         const currentDmg = conf.baseDmg + (tower.level * 5) + (tower.type === 'fire' ? tower.level * 10 : 0);
@@ -375,6 +456,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         return tower;
     }));
 
+    // Lumberjack Logic
     if (staff.lumberjack > 0 && now - lastLumberAction.current > 50) {
          let nextPos = lumberjackState.position;
          let nextState = lumberjackState.state;
@@ -408,6 +490,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
          lastLumberAction.current = now;
     }
 
+    // Civilian Logic
     setCivilians(prev => prev.map(civ => {
         let nextPos = civ.position;
         let nextState = civ.state;
@@ -426,6 +509,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         return { ...civ, position: nextPos, state: nextState };
     }).filter(c => getDistance(c.position, EXIT_POINT) > 10));
 
+    // Customer Logic
     setCustomers(prev => prev.map((cust, index) => {
         let nextPos = cust.position;
         let nextState = cust.state;
@@ -443,16 +527,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
         return { ...cust, position: nextPos, state: nextState };
     }).filter(c => getDistance(c.position, EXIT_POINT) > 10));
 
-    const pathTarget = { x: TOWER_SLOTS[0].x - 50, y: TOWER_SLOTS[0].y }; 
-    setEnemies(prev => prev.map(enemy => {
-         let target = pathTarget;
-         if (enemy.type === 'bat') target = EXIT_POINT; 
-         let nextPos = enemy.position;
-         if (getDistance(enemy.position, target) > 10) nextPos = moveTowards(enemy.position, target, enemy.speed);
-         else if (enemy.type !== 'bat') nextPos = moveTowards(enemy.position, EXIT_POINT, enemy.speed);
-         return { ...enemy, position: nextPos };
-    }).filter(e => e.hp > 0));
-
+    // Projectile Collision
     setProjectiles(prev => {
       const activeProjs: Projectile[] = [];
       const hits: string[] = []; 
@@ -494,7 +569,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
 
     setParticles(prev => prev.map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, vy: p.vy + 0.1, life: p.life - 0.02 })).filter(p => p.life > 0));
     setGameState(prev => ({ ...prev, lastTick: now }));
-  }, [customers, civilians, enemies, towers, gameState, showTutorial, activeModal, levelUpModal, showExitConfirm, localUser.level, resources, noMeatWarning, lumberjackState, staff]);
+  }, [customers, civilians, enemies, towers, gameState, showTutorial, activeModal, levelUpModal, showExitConfirm, localUser.level, resources, noMeatWarning, lumberjackState, staff, walls]);
 
   useEffect(() => {
     const firstCustomer = customers[0];
@@ -582,10 +657,20 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
 
   return (
     <div className="w-full h-full bg-[#0f111a] flex items-center justify-center overflow-hidden relative">
+      {/* Activate Animations */}
+      <EntitiesStyle /> 
+
       <div style={{ transform: `scale(${scale})`, transformOrigin: 'center' }}>
           <div className="relative shadow-2xl overflow-hidden border-4 border-stone-800 rounded-xl" style={{ width: GAME_WIDTH, height: GAME_HEIGHT }}>
             <GameMap season={gameState.season} />
             
+            {/* --- RENDER WALLS --- */}
+            <div className="absolute inset-0 z-10 pointer-events-none">
+                {walls.map(wall => (
+                    <WallEntity key={wall.id} x={WALL_X} y={wall.y} hp={wall.hp} maxHp={wall.maxHp} />
+                ))}
+            </div>
+
             {trees.map(t => <TreeEntity key={t.id} x={t.x} y={t.y} hp={t.hp} />)}
             {staff.lumberjack > 0 && <LumberjackEntity x={lumberjackState.position.x} y={lumberjackState.position.y} state={lumberjackState.state} />}
             {staff.chef > 0 && <ChefEntity x={GRILL_POS.x} y={GRILL_POS.y - 20} level={staff.chef} />}
@@ -667,7 +752,7 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
                                     <Beef size={20} className="fill-red-900 text-red-500" />
                                     <span className="text-xl font-black text-white">{resources['prod_meat'] || 0}</span>
                             </div>
-                            <button onClick={() => setShowExitConfirm(true)} className="bg-red-600 hover:bg-red-500 rounded-lg p-2 text-white shadow-md transition-transform active:scale-95"><LogOut size={24}/></button>
+                            <button onClick={() => setShowExitConfirm(true)} className="bg-red-600 hover:bg-red-500 rounded-lg p-2 text-white shadow-md transition-transform active:scale-95"><ArrowLeftCircle size={24}/></button>
                     </div>
                 </div>
                 
@@ -680,6 +765,12 @@ export const GameSession: React.FC<GameSessionProps> = ({ user, difficulty, onEx
                         </div>
                     </div>
                 )}
+                
+                {/* Wall Protection Warning */}
+                <div className="absolute top-20 right-4 bg-black/50 text-white p-2 rounded border border-red-500 animate-pulse flex items-center gap-2 pointer-events-none">
+                    <ShieldAlert className="text-red-500"/>
+                    <span className="font-bold text-xs">BẢO VỆ TƯỜNG THÀNH!</span>
+                </div>
 
                 {/* Bottom Bar */}
                 <div className="flex items-end justify-center w-full pointer-events-auto relative h-16">
